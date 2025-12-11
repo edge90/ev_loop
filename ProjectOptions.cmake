@@ -122,6 +122,8 @@ macro(ev_loop_setup_options)
   endif()
 
   option(ev_loop_BUILD_FUZZ_TESTS "Enable fuzz testing executable" ${DEFAULT_FUZZER})
+  option(ev_loop_BUILD_BENCHMARKS "Build benchmark executables" ON)
+  option(ev_loop_BUILD_EXAMPLES "Build example executables" ON)
 
 endmacro()
 
