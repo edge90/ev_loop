@@ -48,7 +48,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 
   SECTION("trivial store and get")
   {
-    ev::TaggedEvent<TrivialEvent, int> tagged_event;
+    ev_loop::TaggedEvent<TrivialEvent, int> tagged_event;
     tagged_event.store(TrivialEvent{ .x_coord = kTrivialX, .y_coord = kTrivialY });
     REQUIRE(tagged_event.index() == 0U);
     REQUIRE(tagged_event.get<0>().x_coord == kTrivialX);
@@ -57,7 +57,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 
   SECTION("multiple types")
   {
-    ev::TaggedEvent<TrivialEvent, int, double> tagged_event;
+    ev_loop::TaggedEvent<TrivialEvent, int, double> tagged_event;
 
     tagged_event.store(TrivialEvent{ .x_coord = 1, .y_coord = 2 });
     REQUIRE(tagged_event.index() == 0U);
@@ -76,7 +76,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
   {
     reset_tracking();
     {
-      ev::TaggedEvent<TrackedString, int> tagged_event;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event;
       tagged_event.store(TrackedString{ "hello" });
       REQUIRE(tagged_event.index() == 0U);
       REQUIRE(tagged_event.get<0>().value == "hello");
@@ -88,7 +88,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
   {
     reset_tracking();
     {
-      ev::TaggedEvent<TrackedString, int> tagged_event;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event;
       tagged_event.store(TrackedString{ "first" });
       REQUIRE(tagged_event.get<0>().value == "first");
 
@@ -106,13 +106,13 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
   {
     reset_tracking();
     {
-      ev::TaggedEvent<TrackedString, int> tagged_event1;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event1;
       tagged_event1.store(TrackedString{ "moveme" });
 
       const int before_construct = constructed_count;
       const int before_destruct = destructed_count;
 
-      ev::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
       REQUIRE(tagged_event2.get<0>().value == "moveme");
       REQUIRE(tagged_event2.index() == 0U);
       // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved) - intentionally testing post-move state
@@ -128,10 +128,10 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
   {
     reset_tracking();
     {
-      ev::TaggedEvent<TrackedString, int> tagged_event1;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event1;
       tagged_event1.store(TrackedString{ "source" });
 
-      ev::TaggedEvent<TrackedString, int> tagged_event2;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event2;
       tagged_event2.store(TrackedString{ "dest" });
 
       const int before_destruct = destructed_count;
@@ -150,10 +150,10 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
   {
     reset_tracking();
     {
-      ev::TaggedEvent<TrackedString, int> tagged_event1;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event1;
       tagged_event1.store(TrackedString{ "copyme" });
 
-      ev::TaggedEvent<TrackedString, int> tagged_event2(tagged_event1);
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event2(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "copyme");
       REQUIRE(tagged_event1.get<0>().value == "copyme");
     }
@@ -165,10 +165,10 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
   {
     reset_tracking();
     {
-      ev::TaggedEvent<TrackedString, int> tagged_event1;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event1;
       tagged_event1.store(TrackedString{ "source" });
 
-      ev::TaggedEvent<TrackedString, int> tagged_event2;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event2;
       tagged_event2.store(TrackedString{ "dest" });
 
       tagged_event2 = tagged_event1;
@@ -182,7 +182,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
   {
     reset_tracking();
     {
-      ev::TaggedEvent<TrackedString, int> tagged_event;
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event;
       tagged_event.store(TrackedString{ "selftest" });
 
 #ifdef __clang__
@@ -210,25 +210,25 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 
   SECTION("move only type")
   {
-    ev::TaggedEvent<HeapEvent, int> tagged_event;
+    ev_loop::TaggedEvent<HeapEvent, int> tagged_event;
     tagged_event.store(HeapEvent{ kTestInt });
     REQUIRE(tagged_event.get<0>().value() == kTestInt);
 
-    ev::TaggedEvent<HeapEvent, int> tagged_event2(std::move(tagged_event));
+    ev_loop::TaggedEvent<HeapEvent, int> tagged_event2(std::move(tagged_event));
     REQUIRE(tagged_event2.get<0>().value() == kTestInt);
   }
 
   SECTION("empty after move")
   {
     reset_tracking();
-    ev::TaggedEvent<TrackedString, int> tagged_event1;
+    ev_loop::TaggedEvent<TrackedString, int> tagged_event1;
     tagged_event1.store(TrackedString{ "test" });
 
-    const ev::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
+    const ev_loop::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
 
     // After move, index should be max value for the tag type (uninitialized)
     // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved) - intentionally testing post-move state
-    REQUIRE(tagged_event1.index() == std::numeric_limits<ev::tag_type_t<2>>::max());
+    REQUIRE(tagged_event1.index() == std::numeric_limits<ev_loop::tag_type_t<2>>::max());
   }
 }
 
@@ -254,30 +254,30 @@ TEST_CASE("tag_type_selector", "[tagged_event]")
   SECTION("static assertions")
   {
     // Static assertions to verify tag_type_selector at compile time
-    static_assert(std::is_same_v<ev::tag_type_t<0>, std::uint8_t>);
-    static_assert(std::is_same_v<ev::tag_type_t<1>, std::uint8_t>);
-    static_assert(std::is_same_v<ev::tag_type_t<kTagTypeCount100>, std::uint8_t>);
-    static_assert(std::is_same_v<ev::tag_type_t<kTagTypeCount254>, std::uint8_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<0>, std::uint8_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<1>, std::uint8_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<kTagTypeCount100>, std::uint8_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<kTagTypeCount254>, std::uint8_t>);
     // 255 events need uint16_t since max(uint8_t)=255 is reserved for uninitialized
-    static_assert(std::is_same_v<ev::tag_type_t<kTagTypeCount255>, std::uint16_t>);
-    static_assert(std::is_same_v<ev::tag_type_t<kTagTypeCount256>, std::uint16_t>);
-    static_assert(std::is_same_v<ev::tag_type_t<kTagTypeCount1000>, std::uint16_t>);
-    static_assert(std::is_same_v<ev::tag_type_t<kTagTypeCount65534>, std::uint16_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<kTagTypeCount255>, std::uint16_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<kTagTypeCount256>, std::uint16_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<kTagTypeCount1000>, std::uint16_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<kTagTypeCount65534>, std::uint16_t>);
     // 65535 events need uint32_t
-    static_assert(std::is_same_v<ev::tag_type_t<kTagTypeCount65535>, std::uint32_t>);
-    static_assert(std::is_same_v<ev::tag_type_t<kTagTypeCount100000>, std::uint32_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<kTagTypeCount65535>, std::uint32_t>);
+    static_assert(std::is_same_v<ev_loop::tag_type_t<kTagTypeCount100000>, std::uint32_t>);
   }
 
   SECTION("uninitialized_tag is max value for selected type")
   {
     // For small event counts, tag is uint8_t and uninitialized is 255
-    using SmallTagged = ev::TaggedEvent<int, double>;
+    using SmallTagged = ev_loop::TaggedEvent<int, double>;
     const SmallTagged small_tagged{};
     REQUIRE(small_tagged.index() == kUninitializedTag);
 
     // Verify the tag type sizes are what we expect
-    REQUIRE(sizeof(ev::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall);   // uint8_t
-    REQUIRE(sizeof(ev::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium);  // uint16_t
-    REQUIRE(sizeof(ev::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge); // uint32_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall);   // uint8_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium);  // uint16_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge); // uint32_t
   }
 }

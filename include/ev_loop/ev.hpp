@@ -16,7 +16,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace ev {
+namespace ev_loop {
 
 // =============================================================================
 // Portable CPU pause hint for spin loops
@@ -1353,10 +1353,10 @@ template<typename... Receivers> struct ValidateReceivers
 // =============================================================================
 
 // NOLINTBEGIN(cppcoreguidelines-macro-usage)
-#define EV_RECEIVES(...) using receives = ::ev::type_list<__VA_ARGS__>
-#define EV_EMITS(...) using emits = ::ev::type_list<__VA_ARGS__>
+#define EV_RECEIVES(...) using receives = ::ev_loop::type_list<__VA_ARGS__>
+#define EV_EMITS(...) using emits = ::ev_loop::type_list<__VA_ARGS__>
 // NOLINTEND(cppcoreguidelines-macro-usage)
-#define EV_SAME_THREAD static constexpr ::ev::ThreadMode thread_mode = ::ev::ThreadMode::SameThread
-#define EV_OWN_THREAD static constexpr ::ev::ThreadMode thread_mode = ::ev::ThreadMode::OwnThread
+#define EV_SAME_THREAD static constexpr ::ev_loop::ThreadMode thread_mode = ::ev_loop::ThreadMode::SameThread
+#define EV_OWN_THREAD static constexpr ::ev_loop::ThreadMode thread_mode = ::ev_loop::ThreadMode::OwnThread
 
-}// namespace ev
+}// namespace ev_loop

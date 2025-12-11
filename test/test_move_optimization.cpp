@@ -17,9 +17,9 @@ constexpr int kPollDelayMs = 1;
 
 struct TrackedReceiver1
 {
-  using receives = ev::type_list<TrackedString>;
+  using receives = ev_loop::type_list<TrackedString>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
@@ -30,9 +30,9 @@ struct TrackedReceiver1
 
 struct TrackedReceiver2
 {
-  using receives = ev::type_list<TrackedString>;
+  using receives = ev_loop::type_list<TrackedString>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
@@ -43,9 +43,9 @@ struct TrackedReceiver2
 
 struct TrackedReceiver3
 {
-  using receives = ev::type_list<TrackedString>;
+  using receives = ev_loop::type_list<TrackedString>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
@@ -60,9 +60,9 @@ struct TrackedReceiver3
 
 struct TrackedOwnThreadReceiver1
 {
-  using receives = ev::type_list<TrackedString>;
+  using receives = ev_loop::type_list<TrackedString>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
   std::atomic<int> received{ 0 };
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
@@ -73,9 +73,9 @@ struct TrackedOwnThreadReceiver1
 
 struct TrackedOwnThreadReceiver2
 {
-  using receives = ev::type_list<TrackedString>;
+  using receives = ev_loop::type_list<TrackedString>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
   std::atomic<int> received{ 0 };
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
@@ -95,12 +95,12 @@ TEST_CASE("Move optimization SameThread", "[move_optimization]")
   {
     reset_tracking();
     {
-      ev::EventLoop<TrackedReceiver1> loop;
+      ev_loop::EventLoop<TrackedReceiver1> loop;
       loop.start();
 
       loop.emit(TrackedString{ "test" });
 
-      while (ev::Spin{ loop }.poll()) {}
+      while (ev_loop::Spin{ loop }.poll()) {}
 
       loop.stop();
 
@@ -114,12 +114,12 @@ TEST_CASE("Move optimization SameThread", "[move_optimization]")
   {
     reset_tracking();
     {
-      ev::EventLoop<TrackedReceiver1, TrackedReceiver2, TrackedReceiver3> loop;
+      ev_loop::EventLoop<TrackedReceiver1, TrackedReceiver2, TrackedReceiver3> loop;
       loop.start();
 
       loop.emit(TrackedString{ "test" });
 
-      while (ev::Spin{ loop }.poll()) {}
+      while (ev_loop::Spin{ loop }.poll()) {}
 
       loop.stop();
 
@@ -137,7 +137,7 @@ TEST_CASE("Move optimization OwnThread", "[move_optimization][threaded]")
 {
   SECTION("single receiver gets move")
   {
-    ev::EventLoop<TrackedOwnThreadReceiver1> loop;
+    ev_loop::EventLoop<TrackedOwnThreadReceiver1> loop;
     loop.start();
 
     const int before_copy = copy_count;
@@ -155,7 +155,7 @@ TEST_CASE("Move optimization OwnThread", "[move_optimization][threaded]")
 
   SECTION("multiple receivers copy optimization")
   {
-    ev::EventLoop<TrackedOwnThreadReceiver1, TrackedOwnThreadReceiver2> loop;
+    ev_loop::EventLoop<TrackedOwnThreadReceiver1, TrackedOwnThreadReceiver2> loop;
     loop.start();
 
     const int before_copy = copy_count;
@@ -175,13 +175,13 @@ TEST_CASE("Move optimization OwnThread", "[move_optimization][threaded]")
 
   SECTION("mixed same and ownthread")
   {
-    ev::EventLoop<TrackedReceiver1, TrackedOwnThreadReceiver1> loop;
+    ev_loop::EventLoop<TrackedReceiver1, TrackedOwnThreadReceiver1> loop;
     loop.start();
 
     const int before_copy = copy_count;
     loop.emit(TrackedString{ "test" });
 
-    while (ev::Spin{ loop }.poll()) {}
+    while (ev_loop::Spin{ loop }.poll()) {}
 
     while (loop.get<TrackedOwnThreadReceiver1>().received.load() < 1) {
       std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));

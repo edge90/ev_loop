@@ -41,9 +41,9 @@ struct ChainEvent
 
 struct Logger
 {
-  using receives = ev::type_list<LogEvent, ProcessedEvent>;
+  using receives = ev_loop::type_list<LogEvent, ProcessedEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(LogEvent event, Dispatcher& /*dispatcher*/)
@@ -65,10 +65,10 @@ struct Logger
 
 struct Controller
 {
-  using receives = ev::type_list<StartEvent>;
-  using emits = ev::type_list<DataEvent, LogEvent>;
+  using receives = ev_loop::type_list<StartEvent>;
+  using emits = ev_loop::type_list<DataEvent, LogEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(StartEvent event, Dispatcher& dispatcher)
@@ -85,10 +85,10 @@ struct Controller
 
 struct Processor
 {
-  using receives = ev::type_list<DataEvent>;
-  using emits = ev::type_list<ProcessedEvent, LogEvent>;
+  using receives = ev_loop::type_list<DataEvent>;
+  using emits = ev_loop::type_list<ProcessedEvent, LogEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   int counter = 0;
 
@@ -109,10 +109,10 @@ struct Processor
 
 struct ChainHandler
 {
-  using receives = ev::type_list<ChainEvent>;
-  using emits = ev::type_list<ChainEvent, LogEvent>;
+  using receives = ev_loop::type_list<ChainEvent>;
+  using emits = ev_loop::type_list<ChainEvent, LogEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int max_depth = 5;
 
@@ -139,7 +139,7 @@ constexpr int kThreadedReceiverDelayMs = 50;
 // NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in examples
 int main()
 {
-  ev::EventLoop<Logger, Controller, Processor, ChainHandler> loop;
+  ev_loop::EventLoop<Logger, Controller, Processor, ChainHandler> loop;
 
   loop.start();
 
@@ -151,7 +151,7 @@ int main()
   loop.emit(StartEvent{ 2 });
 
   // Process events
-  ev::Spin strategy{ loop };
+  ev_loop::Spin strategy{ loop };
   for (int i = 0; i < kMaxPollIterations && strategy.poll(); ++i) {}
 
   // Give threaded receiver time
