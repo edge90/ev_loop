@@ -80,6 +80,7 @@ template<typename T, typename... Ts> inline constexpr std::size_t index_of_v = i
 // Type at index
 template<std::size_t I, typename... Ts> using type_at_t = std::tuple_element_t<I, std::tuple<Ts...>>;
 
+
 // =============================================================================
 // Tagged union (faster than std::variant)
 // =============================================================================
@@ -176,16 +177,13 @@ public:
     new (storage.data()) Decayed(std::forward<E>(event));
   }
 
-  template<std::size_t I> auto &get()
+  // cppcheck-suppress functionStatic ; explicit object parameter functions cannot be static
+  template<std::size_t I, typename Self> auto &get(this Self &self)
   {
+    using Base = type_at_t<I, Events...>;
+    using T = std::conditional_t<std::is_const_v<Self>, const Base, Base>;
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    return *reinterpret_cast<type_at_t<I, Events...> *>(storage.data());
-  }
-
-  template<std::size_t I> const auto &get() const
-  {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    return *reinterpret_cast<const type_at_t<I, Events...> *>(storage.data());
+    return *reinterpret_cast<T *>(self.storage.data());
   }
 
   [[nodiscard]] std::size_t index() const noexcept { return tag; }
