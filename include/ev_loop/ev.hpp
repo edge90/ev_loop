@@ -94,10 +94,9 @@ template<std::size_t... Vs> constexpr std::size_t const_max()
 // Select smallest unsigned type that can hold N event types + 1 (for uninitialized)
 template<std::size_t N> struct tag_type_selector
 {
-  using type = std::conditional_t < N < std::numeric_limits<std::uint8_t>::max(), std::uint8_t,
-        std::conditional_t < N<std::numeric_limits<std::uint16_t>::max(),
-          std::uint16_t,
-          std::conditional_t<N<std::numeric_limits<std::uint32_t>::max(), std::uint32_t, std::uint64_t>>>;
+  static_assert(N < std::numeric_limits<std::uint32_t>::max(), "Too many event types (max ~4 billion)");
+  using type = std::conditional_t<N < std::numeric_limits<std::uint8_t>::max(), std::uint8_t,
+        std::conditional_t<N < std::numeric_limits<std::uint16_t>::max(), std::uint16_t, std::uint32_t>>;
 };
 
 template<std::size_t N> using tag_type_t = typename tag_type_selector<N>::type;

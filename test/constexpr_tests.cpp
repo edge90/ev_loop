@@ -38,7 +38,20 @@ TEST_CASE("const_max computes maximum at compile time", "[constexpr]")
 
 TEST_CASE("tag_type_t selects smallest sufficient type", "[constexpr]")
 {
-  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<10>) == 1);    // fits in uint8_t
-  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<200>) == 1);   // fits in uint8_t
-  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<300>) == 2);   // needs uint16_t
+  // uint8_t range: 0-254 (255 reserved for uninitialized)
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<10>) == 1);
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<200>) == 1);
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<254>) == 1);
+
+  // uint16_t range: 255-65534
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<255>) == 2);
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<300>) == 2);
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<65534>) == 2);
+
+  // uint32_t range: 65535 to uint32_max-1
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<65535>) == 4);
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<100000>) == 4);
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<4294967294UL>) == 4);  // max valid value
+
+  // Values >= uint32_max trigger static_assert: "Too many event types (max ~4 billion)"
 }
