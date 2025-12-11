@@ -110,3 +110,10 @@ target_link_libraries(test_builder_duplicate_fail PRIVATE ev_loop::ev_loop)
 add_test(NAME builder_duplicate_should_fail
          COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_builder_duplicate_fail)
 set_tests_properties(builder_duplicate_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that tag_type_t rejects N >= uint32_t max
+add_executable(test_tag_type_overflow_fail EXCLUDE_FROM_ALL test_tag_type_overflow_fail.cpp)
+target_link_libraries(test_tag_type_overflow_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME tag_type_overflow_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_tag_type_overflow_fail)
+set_tests_properties(tag_type_overflow_should_fail PROPERTIES WILL_FAIL TRUE)
