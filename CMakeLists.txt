@@ -83,6 +83,16 @@ if(ev_loop_BUILD_FUZZ_TESTS)
 
 endif()
 
+if(ev_loop_BUILD_BENCHMARKS)
+  message(AUTHOR_WARNING "Building Benchmarks")
+  add_subdirectory(benchmark)
+endif()
+
+if(ev_loop_BUILD_EXAMPLES)
+  message(AUTHOR_WARNING "Building Examples")
+  add_subdirectory(example)
+endif()
+
 # If MSVC is being used, and ASAN is enabled, we need to set the debugger environment
 # so that it behaves well with MSVC's debugger, and we can run the target from visual studio
 if(MSVC)
