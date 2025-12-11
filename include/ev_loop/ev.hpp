@@ -1347,16 +1347,4 @@ template<typename... Receivers> struct ValidateReceivers
     return (ReceiverValidator<Receivers, EventLoopType>::validate() && ...);
   }
 };
-
-// =============================================================================
-// Helper macros for defining receivers (optional convenience)
-// =============================================================================
-
-// NOLINTBEGIN(cppcoreguidelines-macro-usage)
-#define EV_RECEIVES(...) using receives = ::ev_loop::type_list<__VA_ARGS__>
-#define EV_EMITS(...) using emits = ::ev_loop::type_list<__VA_ARGS__>
-// NOLINTEND(cppcoreguidelines-macro-usage)
-#define EV_SAME_THREAD static constexpr ::ev_loop::ThreadMode thread_mode = ::ev_loop::ThreadMode::SameThread
-#define EV_OWN_THREAD static constexpr ::ev_loop::ThreadMode thread_mode = ::ev_loop::ThreadMode::OwnThread
-
 }// namespace ev_loop
