@@ -22,10 +22,10 @@ struct HeapEvent
 
   HeapEvent() = default;
   explicit HeapEvent(int val) : ptr(std::make_unique<int>(val)) {}
-  HeapEvent(const HeapEvent&) = delete;
-  HeapEvent& operator=(const HeapEvent&) = delete;
-  HeapEvent(HeapEvent&&) = default;
-  HeapEvent& operator=(HeapEvent&&) = default;
+  HeapEvent(const HeapEvent &) = delete;
+  HeapEvent &operator=(const HeapEvent &) = delete;
+  HeapEvent(HeapEvent &&) = default;
+  HeapEvent &operator=(HeapEvent &&) = default;
   ~HeapEvent() = default;
 
   [[nodiscard]] int value() const { return ptr ? *ptr : -1; }
@@ -115,8 +115,8 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       ev_loop::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
       REQUIRE(tagged_event2.get<0>().value == "moveme");
       REQUIRE(tagged_event2.index() == 0U);
-      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
-      REQUIRE(tagged_event1.index() == kUninitializedTag);
+      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+      REQUIRE(tagged_event1.index() == kUninitializedTag);// intentionally testing post-move state
 
       REQUIRE(constructed_count == before_construct + 1);
       REQUIRE(destructed_count == before_destruct + 1);
@@ -138,8 +138,8 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "source");
-      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
-      REQUIRE(tagged_event1.index() == kUninitializedTag);
+      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+      REQUIRE(tagged_event1.index() == kUninitializedTag);// intentionally testing post-move state
 
       REQUIRE(destructed_count > before_destruct);
     }
@@ -159,6 +159,39 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     }
     REQUIRE(constructed_count == destructed_count);
     REQUIRE(copy_count > 0);
+  }
+
+  SECTION("copy constructor with second type")
+  {
+    ev_loop::TaggedEvent<int, TrackedString> tagged_event1;
+    tagged_event1.store(TrackedString{ "second" });
+    REQUIRE(tagged_event1.index() == 1U);
+
+    const ev_loop::TaggedEvent<int, TrackedString> tagged_event2(tagged_event1);
+    REQUIRE(tagged_event2.index() == 1U);
+    REQUIRE(tagged_event2.get<1>().value == "second");
+  }
+
+  SECTION("move constructor with second type")
+  {
+    ev_loop::TaggedEvent<int, TrackedString> tagged_event1;
+    tagged_event1.store(TrackedString{ "moveme" });
+    REQUIRE(tagged_event1.index() == 1U);
+
+    const ev_loop::TaggedEvent<int, TrackedString> tagged_event2(std::move(tagged_event1));
+    REQUIRE(tagged_event2.index() == 1U);
+    REQUIRE(tagged_event2.get<1>().value == "moveme");
+  }
+
+  SECTION("destroy with second type")
+  {
+    reset_tracking();
+    {
+      ev_loop::TaggedEvent<int, TrackedString> tagged_event;
+      tagged_event.store(TrackedString{ "destroy" });
+      REQUIRE(tagged_event.index() == 1U);
+    }
+    REQUIRE(constructed_count == destructed_count);
   }
 
   SECTION("copy assignment")
@@ -195,6 +228,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 #endif
       REQUIRE(tagged_event.get<0>().value == "selftest");
 
+// NOLINTBEGIN(readability-use-concise-preprocessor-directives) - #elifdef not portable
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wself-move"
@@ -209,6 +243,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
+      // NOLINTEND(readability-use-concise-preprocessor-directives)
       REQUIRE(tagged_event.get<0>().value == "selftest");
     }
     REQUIRE(constructed_count == destructed_count);
@@ -245,7 +280,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       const int constructs_before = constructed_count;
 
       // Getting reference should not copy or move
-      TrackedString &ref = tracked.get<0>();
+      const TrackedString &ref = tracked.get<0>();
       REQUIRE(ref.value == "reftest");
       REQUIRE(constructed_count == constructs_before);
       REQUIRE(copy_count == 0);
@@ -261,7 +296,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     const ev_loop::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
 
     // After move, index should be max value for the tag type (uninitialized)
-    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
+    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
     REQUIRE(tagged_event1.index() == std::numeric_limits<ev_loop::tag_type_t<2>>::max());
   }
 }
@@ -310,8 +345,157 @@ TEST_CASE("tag_type_selector", "[tagged_event]")
     REQUIRE(small_tagged.index() == kUninitializedTag);
 
     // Verify the tag type sizes are what we expect
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall);   // uint8_t
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium);  // uint16_t
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge); // uint32_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall);// uint8_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium);// uint16_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge);// uint32_t
+  }
+}
+
+// =============================================================================
+// Trivial-only type tests (exercises different code paths via if constexpr)
+// =============================================================================
+
+TEST_CASE("TaggedEvent trivial types", "[tagged_event]")
+{
+  using TrivialTagged = ev_loop::TaggedEvent<int, double, char>;
+  constexpr int kTestInt = 42;
+  constexpr double kTestDouble = 3.14;
+  constexpr char kTestChar = 'x';
+  constexpr std::uint8_t kUninitializedTag = 255;
+
+  SECTION("default constructor")
+  {
+    const TrivialTagged tagged{};
+    REQUIRE(tagged.index() == kUninitializedTag);
+  }
+
+  SECTION("store and get")
+  {
+    TrivialTagged tagged;
+    tagged.store(kTestInt);
+    REQUIRE(tagged.index() == 0U);
+    REQUIRE(tagged.get<0>() == kTestInt);
+
+    tagged.store(kTestDouble);
+    REQUIRE(tagged.index() == 1U);
+
+    tagged.store(kTestChar);
+    REQUIRE(tagged.index() == 2U);
+    REQUIRE(tagged.get<2>() == kTestChar);
+  }
+
+  SECTION("copy constructor")
+  {
+    TrivialTagged tagged1;
+    tagged1.store(kTestInt);
+
+    const TrivialTagged tagged2(tagged1);
+    REQUIRE(tagged2.index() == 0U);
+    REQUIRE(tagged2.get<0>() == kTestInt);
+    REQUIRE(tagged1.get<0>() == kTestInt);
+  }
+
+  SECTION("copy assignment")
+  {
+    TrivialTagged tagged1;
+    tagged1.store(kTestInt);
+
+    TrivialTagged tagged2;
+    tagged2.store(kTestDouble);
+
+    tagged2 = tagged1;
+    REQUIRE(tagged2.index() == 0U);
+    REQUIRE(tagged2.get<0>() == kTestInt);
+  }
+
+  SECTION("move constructor")
+  {
+    TrivialTagged tagged1;
+    tagged1.store(kTestInt);
+
+    const TrivialTagged tagged2(std::move(tagged1));
+    REQUIRE(tagged2.index() == 0U);
+    REQUIRE(tagged2.get<0>() == kTestInt);
+    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+    REQUIRE(tagged1.index() == kUninitializedTag);
+  }
+
+  SECTION("move assignment")
+  {
+    TrivialTagged tagged1;
+    tagged1.store(kTestInt);
+
+    TrivialTagged tagged2;
+    tagged2.store(kTestDouble);
+
+    tagged2 = std::move(tagged1);
+    REQUIRE(tagged2.index() == 0U);
+    REQUIRE(tagged2.get<0>() == kTestInt);
+    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+    REQUIRE(tagged1.index() == kUninitializedTag);
+  }
+
+  SECTION("copy uninitialized")
+  {
+    const TrivialTagged tagged1{};
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization) - testing copy constructor
+    const TrivialTagged tagged2(tagged1);
+    REQUIRE(tagged2.index() == kUninitializedTag);
+  }
+
+  SECTION("move uninitialized")
+  {
+    TrivialTagged tagged1;
+    const TrivialTagged tagged2(std::move(tagged1));
+    REQUIRE(tagged2.index() == kUninitializedTag);
+  }
+
+  SECTION("converting constructor")
+  {
+    const TrivialTagged tagged(kTestInt);
+    REQUIRE(tagged.index() == 0U);
+    REQUIRE(tagged.get<0>() == kTestInt);
+  }
+
+  SECTION("copy with second type")
+  {
+    TrivialTagged tagged1;
+    tagged1.store(kTestDouble);
+    REQUIRE(tagged1.index() == 1U);
+
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization) - testing copy constructor
+    const TrivialTagged tagged2(tagged1);
+    REQUIRE(tagged2.index() == 1U);
+  }
+
+  SECTION("copy with third type")
+  {
+    TrivialTagged tagged1;
+    tagged1.store(kTestChar);
+    REQUIRE(tagged1.index() == 2U);
+
+    // NOLINTNEXTLINE(performance-unnecessary-copy-initialization) - testing copy constructor
+    const TrivialTagged tagged2(tagged1);
+    REQUIRE(tagged2.index() == 2U);
+    REQUIRE(tagged2.get<2>() == kTestChar);
+  }
+
+  SECTION("move with second type")
+  {
+    TrivialTagged tagged1;
+    tagged1.store(kTestDouble);
+
+    const TrivialTagged tagged2(std::move(tagged1));
+    REQUIRE(tagged2.index() == 1U);
+  }
+
+  SECTION("move with third type")
+  {
+    TrivialTagged tagged1;
+    tagged1.store(kTestChar);
+
+    const TrivialTagged tagged2(std::move(tagged1));
+    REQUIRE(tagged2.index() == 2U);
+    REQUIRE(tagged2.get<2>() == kTestChar);
   }
 }
