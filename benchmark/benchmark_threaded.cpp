@@ -39,10 +39,10 @@ struct Pong
 
 struct C_OwnThread
 {
-  using receives = ev::type_list<Pong>;
-  using emits = ev::type_list<Ping>;
+  using receives = ev_loop::type_list<Pong>;
+  using emits = ev_loop::type_list<Ping>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int>* counter = nullptr;
 
@@ -55,10 +55,10 @@ struct C_OwnThread
 
 struct D_OwnThread
 {
-  using receives = ev::type_list<Ping>;
-  using emits = ev::type_list<Pong>;
+  using receives = ev_loop::type_list<Ping>;
+  using emits = ev_loop::type_list<Pong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int>* counter = nullptr;
 
@@ -75,10 +75,10 @@ struct D_OwnThread
 
 struct A_SameThread
 {
-  using receives = ev::type_list<Pong>;
-  using emits = ev::type_list<Ping>;
+  using receives = ev_loop::type_list<Pong>;
+  using emits = ev_loop::type_list<Ping>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int counter = 0;
   int last_value = 0;
@@ -93,10 +93,10 @@ struct A_SameThread
 
 struct D_OwnThread_ForMixed
 {
-  using receives = ev::type_list<Ping>;
-  using emits = ev::type_list<Pong>;
+  using receives = ev_loop::type_list<Ping>;
+  using emits = ev_loop::type_list<Pong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int> counter{ 0 };
 
@@ -113,10 +113,10 @@ struct D_OwnThread_ForMixed
 
 struct A_SameThread_Relay
 {
-  using receives = ev::type_list<Pong>;
-  using emits = ev::type_list<Ping>;
+  using receives = ev_loop::type_list<Pong>;
+  using emits = ev_loop::type_list<Ping>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int counter = 0;
 
@@ -129,10 +129,10 @@ struct A_SameThread_Relay
 
 struct D_OwnThread_Starter
 {
-  using receives = ev::type_list<Ping>;
-  using emits = ev::type_list<Pong>;
+  using receives = ev_loop::type_list<Ping>;
+  using emits = ev_loop::type_list<Pong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int> counter{ 0 };
   std::atomic<int> last_value{ 0 };
@@ -158,7 +158,7 @@ void benchmark_ownthread_to_ownthread()
 {
   std::println("=== Benchmark 1: OwnThread C <-> OwnThread D ===");
 
-  ev::EventLoop<C_OwnThread, D_OwnThread> loop;
+  ev_loop::EventLoop<C_OwnThread, D_OwnThread> loop;
 
   std::atomic<int> counter{ 0 };
   loop.get<C_OwnThread>().counter = &counter;
@@ -188,7 +188,7 @@ void benchmark_samethread_to_ownthread()
 {
   std::println("=== Benchmark 2: SameThread A -> OwnThread D -> A ===");
 
-  using Loop = ev::EventLoop<A_SameThread, D_OwnThread_ForMixed>;
+  using Loop = ev_loop::EventLoop<A_SameThread, D_OwnThread_ForMixed>;
   using namespace std::chrono;
 
   // Test with Spin strategy
@@ -198,7 +198,7 @@ void benchmark_samethread_to_ownthread()
     loop.emit(Ping{ 0 });
     auto started = steady_clock::now();
 
-    ev::Spin{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
+    ev_loop::Spin{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
     auto elapsed = steady_clock::now() - started;
     loop.stop();
@@ -213,7 +213,7 @@ void benchmark_samethread_to_ownthread()
     loop.emit(Ping{ 0 });
     auto started = steady_clock::now();
 
-    ev::Yield{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
+    ev_loop::Yield{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
     auto elapsed = steady_clock::now() - started;
     loop.stop();
@@ -228,7 +228,7 @@ void benchmark_samethread_to_ownthread()
     loop.emit(Ping{ 0 });
     auto started = steady_clock::now();
 
-    ev::Wait{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
+    ev_loop::Wait{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
     auto elapsed = steady_clock::now() - started;
     loop.stop();
@@ -241,7 +241,7 @@ void benchmark_ownthread_to_samethread()
 {
   std::println("=== Benchmark 3: OwnThread D -> SameThread A -> D ===");
 
-  using Loop = ev::EventLoop<A_SameThread_Relay, D_OwnThread_Starter>;
+  using Loop = ev_loop::EventLoop<A_SameThread_Relay, D_OwnThread_Starter>;
   using namespace std::chrono;
 
   // Test with Spin strategy
@@ -251,7 +251,7 @@ void benchmark_ownthread_to_samethread()
     loop.emit(Pong{ 0 });
     auto started = steady_clock::now();
 
-    ev::Spin{ loop }.run_while(
+    ev_loop::Spin{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
     auto elapsed = steady_clock::now() - started;
@@ -267,7 +267,7 @@ void benchmark_ownthread_to_samethread()
     loop.emit(Pong{ 0 });
     auto started = steady_clock::now();
 
-    ev::Yield{ loop }.run_while(
+    ev_loop::Yield{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
     auto elapsed = steady_clock::now() - started;
@@ -283,7 +283,7 @@ void benchmark_ownthread_to_samethread()
     loop.emit(Pong{ 0 });
     auto started = steady_clock::now();
 
-    ev::Wait{ loop }.run_while(
+    ev_loop::Wait{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
     auto elapsed = steady_clock::now() - started;

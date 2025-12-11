@@ -58,10 +58,10 @@ struct CrossPong
 
 struct ThreadedPingReceiver
 {
-  using receives = ev::type_list<PongEvent>;
-  using emits = ev::type_list<PingEvent>;
+  using receives = ev_loop::type_list<PongEvent>;
+  using emits = ev_loop::type_list<PingEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int> received_count{ 0 };
   std::atomic<int> last_value{ 0 };
@@ -76,10 +76,10 @@ struct ThreadedPingReceiver
 
 struct ThreadedPongReceiver
 {
-  using receives = ev::type_list<PingEvent>;
-  using emits = ev::type_list<PongEvent>;
+  using receives = ev_loop::type_list<PingEvent>;
+  using emits = ev_loop::type_list<PongEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int> received_count{ 0 };
 
@@ -92,9 +92,9 @@ struct ThreadedPongReceiver
 
 struct ThreadedStringReceiver
 {
-  using receives = ev::type_list<StringEvent>;
+  using receives = ev_loop::type_list<StringEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int> count{ 0 };
   std::mutex mutex;
@@ -116,7 +116,7 @@ struct ThreadedStringReceiver
 
 TEST_CASE("EventLoop own thread ping pong", "[event_loop][threaded]")
 {
-  ev::EventLoop<ThreadedPingReceiver, ThreadedPongReceiver> loop;
+  ev_loop::EventLoop<ThreadedPingReceiver, ThreadedPongReceiver> loop;
   loop.start();
 
   loop.emit(PingEvent{ 0 });
@@ -135,7 +135,7 @@ TEST_CASE("EventLoop own thread ping pong", "[event_loop][threaded]")
 
 TEST_CASE("EventLoop own thread string events", "[event_loop][threaded]")
 {
-  ev::EventLoop<ThreadedStringReceiver> loop;
+  ev_loop::EventLoop<ThreadedStringReceiver> loop;
   loop.start();
 
   for (int i = 0; i < kEventCount; ++i) { loop.emit(StringEvent{ "message_" + std::to_string(i) }); }
@@ -156,9 +156,9 @@ TEST_CASE("EventLoop own thread string events", "[event_loop][threaded]")
 
 struct SameThreadCounter
 {
-  using receives = ev::type_list<MixedEvent>;
+  using receives = ev_loop::type_list<MixedEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int count = 0;
   int sum = 0;
@@ -172,9 +172,9 @@ struct SameThreadCounter
 
 struct OwnThreadCounter
 {
-  using receives = ev::type_list<MixedEvent>;
+  using receives = ev_loop::type_list<MixedEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int> count{ 0 };
   std::atomic<int> sum{ 0 };
@@ -188,12 +188,12 @@ struct OwnThreadCounter
 
 TEST_CASE("EventLoop mixed threading", "[event_loop][threaded]")
 {
-  ev::EventLoop<SameThreadCounter, OwnThreadCounter> loop;
+  ev_loop::EventLoop<SameThreadCounter, OwnThreadCounter> loop;
   loop.start();
 
   for (int i = 0; i < kMixedEventCount; ++i) { loop.emit(MixedEvent{ i }); }
 
-  while (ev::Spin{ loop }.poll()) {}
+  while (ev_loop::Spin{ loop }.poll()) {}
 
   while (loop.get<OwnThreadCounter>().count.load() < kMixedEventCount) {
     std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
@@ -211,10 +211,10 @@ TEST_CASE("EventLoop mixed threading", "[event_loop][threaded]")
 
 struct CrossA_SameThread
 {
-  using receives = ev::type_list<CrossPong>;
-  using emits = ev::type_list<CrossPing>;
+  using receives = ev_loop::type_list<CrossPong>;
+  using emits = ev_loop::type_list<CrossPing>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int received_count = 0;
   int last_value = 0;
@@ -229,10 +229,10 @@ struct CrossA_SameThread
 
 struct CrossD_OwnThread
 {
-  using receives = ev::type_list<CrossPing>;
-  using emits = ev::type_list<CrossPong>;
+  using receives = ev_loop::type_list<CrossPing>;
+  using emits = ev_loop::type_list<CrossPong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int> received_count{ 0 };
 
@@ -245,10 +245,10 @@ struct CrossD_OwnThread
 
 struct CrossD_OwnThread_Starter
 {
-  using receives = ev::type_list<CrossPong>;
-  using emits = ev::type_list<CrossPing>;
+  using receives = ev_loop::type_list<CrossPong>;
+  using emits = ev_loop::type_list<CrossPing>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::OwnThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
   std::atomic<int> received_count{ 0 };
   std::atomic<int> last_value{ 0 };
@@ -263,10 +263,10 @@ struct CrossD_OwnThread_Starter
 
 struct CrossA_SameThread_Relay
 {
-  using receives = ev::type_list<CrossPing>;
-  using emits = ev::type_list<CrossPong>;
+  using receives = ev_loop::type_list<CrossPing>;
+  using emits = ev_loop::type_list<CrossPong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int received_count = 0;
 
@@ -279,12 +279,12 @@ struct CrossA_SameThread_Relay
 
 TEST_CASE("EventLoop cross thread samethread to ownthread", "[event_loop][threaded]")
 {
-  ev::EventLoop<CrossA_SameThread, CrossD_OwnThread> loop;
+  ev_loop::EventLoop<CrossA_SameThread, CrossD_OwnThread> loop;
   loop.start();
 
   loop.emit(CrossPing{ 0 });
 
-  ev::Spin strategy{ loop };
+  ev_loop::Spin strategy{ loop };
   while (loop.get<CrossA_SameThread>().last_value < kPingPongLimit + 1) {
     (void)strategy.poll();
     std::this_thread::sleep_for(std::chrono::microseconds(kSpinDelayUs));
@@ -301,12 +301,12 @@ TEST_CASE("EventLoop cross thread samethread to ownthread", "[event_loop][thread
 
 TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][threaded]")
 {
-  ev::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
+  ev_loop::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
   loop.start();
 
   loop.emit(CrossPing{ 0 });
 
-  ev::Spin strategy{ loop };
+  ev_loop::Spin strategy{ loop };
   while (loop.get<CrossD_OwnThread_Starter>().last_value.load() < kPingPongLimit) {
     (void)strategy.poll();
     std::this_thread::sleep_for(std::chrono::microseconds(kSpinDelayUs));

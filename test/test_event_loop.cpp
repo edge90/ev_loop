@@ -35,10 +35,10 @@ struct StringEvent
 
 struct PingReceiver
 {
-  using receives = ev::type_list<PongEvent>;
-  using emits = ev::type_list<PingEvent>;
+  using receives = ev_loop::type_list<PongEvent>;
+  using emits = ev_loop::type_list<PingEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int received_count = 0;
   int last_value = 0;
@@ -53,10 +53,10 @@ struct PingReceiver
 
 struct PongReceiver
 {
-  using receives = ev::type_list<PingEvent>;
-  using emits = ev::type_list<PongEvent>;
+  using receives = ev_loop::type_list<PingEvent>;
+  using emits = ev_loop::type_list<PongEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int received_count = 0;
 
@@ -69,9 +69,9 @@ struct PongReceiver
 
 struct StringReceiver
 {
-  using receives = ev::type_list<StringEvent>;
+  using receives = ev_loop::type_list<StringEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   std::vector<std::string> received;
 
@@ -87,12 +87,12 @@ struct StringReceiver
 
 TEST_CASE("EventLoop ping pong", "[event_loop]")
 {
-  ev::EventLoop<PingReceiver, PongReceiver> loop;
+  ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
   loop.start();
 
   loop.emit(PingEvent{ 0 });
 
-  while (ev::Spin{ loop }.poll()) {}
+  while (ev_loop::Spin{ loop }.poll()) {}
 
   REQUIRE(loop.get<PingReceiver>().received_count == kPingPongExpectedCount);
   REQUIRE(loop.get<PongReceiver>().received_count == kPingPongExpectedCount);
@@ -105,14 +105,14 @@ TEST_CASE("EventLoop string events", "[event_loop]")
 {
   constexpr std::size_t kExpectedCount = 3;
 
-  ev::EventLoop<StringReceiver> loop;
+  ev_loop::EventLoop<StringReceiver> loop;
   loop.start();
 
   loop.emit(StringEvent{ "hello" });
   loop.emit(StringEvent{ "world" });
   loop.emit(StringEvent{ std::string(kLongStringSize, 'x') });
 
-  while (ev::Spin{ loop }.poll()) {}
+  while (ev_loop::Spin{ loop }.poll()) {}
 
   REQUIRE(loop.get<StringReceiver>().received.size() == kExpectedCount);
   REQUIRE(loop.get<StringReceiver>().received[0] == "hello");
@@ -133,9 +133,9 @@ struct FanoutEvent
 
 struct FanoutReceiverA
 {
-  using receives = ev::type_list<FanoutEvent>;
+  using receives = ev_loop::type_list<FanoutEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
   template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
   {
@@ -145,9 +145,9 @@ struct FanoutReceiverA
 
 struct FanoutReceiverB
 {
-  using receives = ev::type_list<FanoutEvent>;
+  using receives = ev_loop::type_list<FanoutEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
   template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
   {
@@ -157,9 +157,9 @@ struct FanoutReceiverB
 
 struct FanoutReceiverC
 {
-  using receives = ev::type_list<FanoutEvent>;
+  using receives = ev_loop::type_list<FanoutEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
   template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
   {
@@ -172,14 +172,14 @@ TEST_CASE("EventLoop fanout", "[event_loop]")
 {
   constexpr std::size_t kExpectedCount = 3;
 
-  ev::EventLoop<FanoutReceiverA, FanoutReceiverB, FanoutReceiverC> loop;
+  ev_loop::EventLoop<FanoutReceiverA, FanoutReceiverB, FanoutReceiverC> loop;
   loop.start();
 
   loop.emit(FanoutEvent{ 1 });
   loop.emit(FanoutEvent{ 2 });
   loop.emit(FanoutEvent{ 3 });
 
-  while (ev::Spin{ loop }.poll()) {}
+  while (ev_loop::Spin{ loop }.poll()) {}
 
   loop.stop();
 

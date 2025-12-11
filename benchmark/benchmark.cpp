@@ -24,10 +24,10 @@ struct Pong
 
 struct A
 {
-  using receives = ev::type_list<Pong>;
-  using emits = ev::type_list<Ping>;
+  using receives = ev_loop::type_list<Pong>;
+  using emits = ev_loop::type_list<Ping>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
@@ -43,10 +43,10 @@ struct A
 
 struct B
 {
-  using receives = ev::type_list<Ping>;
-  using emits = ev::type_list<Pong>;
+  using receives = ev_loop::type_list<Ping>;
+  using emits = ev_loop::type_list<Pong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev::ThreadMode thread_mode = ev::ThreadMode::SameThread;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
@@ -74,7 +74,7 @@ auto events_per_second(Count event_count, Duration elapsed) -> long long
 // NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in benchmarks
 int main()
 {
-  ev::EventLoop<A, B> loop;
+  ev_loop::EventLoop<A, B> loop;
 
   loop.start();
 
@@ -84,7 +84,7 @@ int main()
 
   constexpr int kIterations = 10'000'000;
 
-  ev::Spin strategy{ loop };
+  ev_loop::Spin strategy{ loop };
   auto started = steady_clock::now();
   for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
   auto elapsed = steady_clock::now() - started;
