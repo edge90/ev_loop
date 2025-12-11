@@ -186,7 +186,7 @@ public:
     return *reinterpret_cast<const type_at_t<I, Events...>*>(storage.data());
   }
 
-  [[nodiscard]] std::size_t index() const { return tag; }
+  [[nodiscard]] std::size_t index() const noexcept { return tag; }
 
 private:
   void destroy()
@@ -310,8 +310,8 @@ public:
     return &buffer_[head_++ & mask_];
   }
 
-  [[nodiscard]] bool empty() const { return head_ == tail_; }
-  [[nodiscard]] std::size_t size() const { return tail_ - head_; }
+  [[nodiscard]] bool empty() const noexcept { return head_ == tail_; }
+  [[nodiscard]] std::size_t size() const noexcept { return tail_ - head_; }
 
 private:
   std::array<T, Capacity> buffer_;
@@ -433,7 +433,7 @@ public:
 
   void stop() { stop_.store(true, std::memory_order_release); }
 
-  [[nodiscard]] bool is_stopped() const { return stop_.load(std::memory_order_acquire); }
+  [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
 
 private:
   alignas(cache_line_size) std::array<T, Capacity> buffer_;
@@ -516,7 +516,7 @@ public:
     cv_.notify_all();
   }
 
-  [[nodiscard]] bool is_stopped() const { return stop_.load(std::memory_order_acquire); }
+  [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
 
 private:
   std::array<T, Capacity> buffer_;
@@ -736,13 +736,13 @@ public:
     receiver_.on_event(std::forward<Event>(event), dispatcher_);
   }
 
-  [[nodiscard]] Receiver& get() { return receiver_; }
-  [[nodiscard]] const Receiver& get() const { return receiver_; }
+  [[nodiscard]] Receiver& get() & noexcept { return receiver_; }
+  [[nodiscard]] const Receiver& get() const & noexcept { return receiver_; }
 
   // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
-  void start() {}
+  void start() noexcept {}
   // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
-  void stop() {}
+  void stop() noexcept {}
 
   static constexpr ThreadMode mode = ThreadMode::SameThread;
 
@@ -805,8 +805,8 @@ public:
     queue_.notify();// Wake up consumer
   }
 
-  [[nodiscard]] Receiver& get() { return receiver_; }
-  [[nodiscard]] const Receiver& get() const { return receiver_; }
+  [[nodiscard]] Receiver& get() & noexcept { return receiver_; }
+  [[nodiscard]] const Receiver& get() const & noexcept { return receiver_; }
 
   static constexpr ThreadMode mode = ThreadMode::OwnThread;
 
@@ -872,10 +872,10 @@ public:
   ReceiverStorage(ReceiverStorage&&) noexcept = default;
   ReceiverStorage& operator=(ReceiverStorage&&) noexcept = default;
 
-  wrapper_type& operator*() { return *wrapper_; }
-  const wrapper_type& operator*() const { return *wrapper_; }
-  wrapper_type* operator->() { return wrapper_.get(); }
-  const wrapper_type* operator->() const { return wrapper_.get(); }
+  wrapper_type& operator*() & noexcept { return *wrapper_; }
+  const wrapper_type& operator*() const & noexcept { return *wrapper_; }
+  wrapper_type* operator->() & noexcept { return wrapper_.get(); }
+  const wrapper_type* operator->() const & noexcept { return wrapper_.get(); }
 
 private:
   std::unique_ptr<wrapper_type> wrapper_;
@@ -1077,9 +1077,9 @@ public:
   }
 
   // Strategy accessors - use with Strategy{loop}.run()
-  [[nodiscard]] bool is_running() const { return running_.load(std::memory_order_acquire); }
+  [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
 
-  [[nodiscard]] queue_type& queue() { return queue_; }
+  [[nodiscard]] queue_type& queue() & noexcept { return queue_; }
 
   [[nodiscard]] tagged_event* try_get_event()
   {
@@ -1111,12 +1111,12 @@ public:
   // Called by OwnThreadDispatcher (uses remote queue with synchronization)
   template<typename Event> void queue_remote(Event&& event) { queue_event<true>(std::forward<Event>(event)); }
 
-  template<typename Receiver> [[nodiscard]] Receiver& get()
+  template<typename Receiver> [[nodiscard]] Receiver& get() &
   {
     return std::get<ReceiverStorage<Receiver, self_type>>(receivers_)->get();
   }
 
-  template<typename Receiver> [[nodiscard]] const Receiver& get() const
+  template<typename Receiver> [[nodiscard]] const Receiver& get() const &
   {
     return std::get<ReceiverStorage<Receiver, self_type>>(receivers_)->get();
   }
