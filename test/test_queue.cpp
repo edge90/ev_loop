@@ -112,9 +112,45 @@ TEST_CASE("SPSCQueue with TaggedEvent", "[spsc_queue]")
   REQUIRE(constructed_count == destructed_count);
 }
 
+TEST_CASE("SPSCQueue full", "[spsc_queue]")
+{
+  ev_loop::SPSCQueue<int, kSmallQueueCapacity> spsc_queue;
+
+  REQUIRE(spsc_queue.push(1));
+  REQUIRE(spsc_queue.push(2));
+  REQUIRE(spsc_queue.push(3));
+  REQUIRE(spsc_queue.push(4));
+  REQUIRE_FALSE(spsc_queue.push(5));
+
+  // Verify data integrity
+  REQUIRE(*spsc_queue.try_pop() == 1);
+  REQUIRE(*spsc_queue.try_pop() == 2);
+  REQUIRE(*spsc_queue.try_pop() == 3);
+  REQUIRE(*spsc_queue.try_pop() == 4);
+  REQUIRE(spsc_queue.try_pop() == nullptr);
+}
+
 // =============================================================================
 // ThreadSafeRingBuffer Tests
 // =============================================================================
+
+TEST_CASE("ThreadSafeRingBuffer full", "[thread_safe_ring_buffer]")
+{
+  ev_loop::ThreadSafeRingBuffer<int, kSmallQueueCapacity> thread_safe_buffer;
+
+  REQUIRE(thread_safe_buffer.push(1));
+  REQUIRE(thread_safe_buffer.push(2));
+  REQUIRE(thread_safe_buffer.push(3));
+  REQUIRE(thread_safe_buffer.push(4));
+  REQUIRE_FALSE(thread_safe_buffer.push(5));
+
+  // Verify data integrity
+  REQUIRE(*thread_safe_buffer.try_pop() == 1);
+  REQUIRE(*thread_safe_buffer.try_pop() == 2);
+  REQUIRE(*thread_safe_buffer.try_pop() == 3);
+  REQUIRE(*thread_safe_buffer.try_pop() == 4);
+  REQUIRE(thread_safe_buffer.try_pop() == nullptr);
+}
 
 TEST_CASE("ThreadSafeRingBuffer no memory leaks", "[thread_safe_ring_buffer]")
 {

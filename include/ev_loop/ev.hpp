@@ -316,7 +316,7 @@ public:
   [[nodiscard]] std::size_t size() const noexcept { return tail_ - head_; }
 
 private:
-  std::array<T, Capacity> buffer_;
+  std::array<T, Capacity> buffer_{};
   std::size_t head_ = 0;
   std::size_t tail_ = 0;
 };
@@ -393,18 +393,20 @@ concept can_receive = contains_v<get_receives_t<Receiver>, std::decay_t<Event>>;
 inline constexpr std::size_t cache_line_size = 64;
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-// cppcheck-suppress noConstructor ; members have default initializers
 template<typename T, std::size_t Capacity = 4096> class SPSCQueue
 {
   static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2");
   static constexpr std::size_t mask_ = Capacity - 1;
 
 public:
-  void push(T event)
+  bool push(T event)
   {
+    std::size_t head = head_.load(std::memory_order_acquire);
     std::size_t tail = tail_.load(std::memory_order_relaxed);
+    if (tail - head >= Capacity) [[unlikely]] { return false; }
     buffer_[tail & mask_] = std::move(event);
     tail_.store(tail + 1, std::memory_order_release);
+    return true;
   }
 
   [[nodiscard]] T *try_pop()
@@ -438,8 +440,8 @@ public:
   [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
 
 private:
-  alignas(cache_line_size) std::array<T, Capacity> buffer_;
-  alignas(cache_line_size) T current_;
+  alignas(cache_line_size) std::array<T, Capacity> buffer_{};
+  alignas(cache_line_size) T current_{};
   alignas(cache_line_size) std::atomic<std::size_t> head_{ 0 };
   alignas(cache_line_size) std::atomic<std::size_t> tail_{ 0 };
   alignas(cache_line_size) std::atomic<bool> stop_{ false };
@@ -459,11 +461,13 @@ template<typename T, std::size_t Capacity = 4096> class ThreadSafeRingBuffer
   static constexpr std::size_t mask_ = Capacity - 1;
 
 public:
-  void push(T event)
+  bool push(T event)
   {
     std::scoped_lock lock(mutex_);
+    if (tail_ - head_ >= Capacity) [[unlikely]] { return false; }
     buffer_[tail_++ & mask_] = std::move(event);
     has_data_.store(true, std::memory_order_release);
+    return true;
   }
 
   [[nodiscard]] T *try_pop()
@@ -521,8 +525,8 @@ public:
   [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
 
 private:
-  std::array<T, Capacity> buffer_;
-  T current_;
+  std::array<T, Capacity> buffer_{};
+  T current_{};
   std::size_t head_ = 0;
   std::size_t tail_ = 0;
   std::mutex mutex_;
