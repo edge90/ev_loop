@@ -9,6 +9,7 @@ conan-cache/
 CMakeUserPresets.json
 
 # IDE files
+.cache/
 .vs/
 .idea/
 .vscode/
