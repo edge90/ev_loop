@@ -115,7 +115,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       ev_loop::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
       REQUIRE(tagged_event2.get<0>().value == "moveme");
       REQUIRE(tagged_event2.index() == 0U);
-      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved) - intentionally testing post-move state
+      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
       REQUIRE(tagged_event1.index() == kUninitializedTag);
 
       REQUIRE(constructed_count == before_construct + 1);
@@ -138,7 +138,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "source");
-      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved) - intentionally testing post-move state
+      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
       REQUIRE(tagged_event1.index() == kUninitializedTag);
 
       REQUIRE(destructed_count > before_destruct);
@@ -195,13 +195,19 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 #endif
       REQUIRE(tagged_event.get<0>().value == "selftest");
 
-#ifdef __clang__
+#if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wself-move"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wself-move"
 #endif
+      // MSVC does not warn on self-move
       tagged_event = std::move(tagged_event);
-#ifdef __clang__
+#if defined(__clang__)
 #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
 #endif
       REQUIRE(tagged_event.get<0>().value == "selftest");
     }
@@ -218,6 +224,34 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     REQUIRE(tagged_event2.get<0>().value() == kTestInt);
   }
 
+  SECTION("get returns correct reference types")
+  {
+    using Tagged = ev_loop::TaggedEvent<std::string, int>;
+
+    // Non-const lvalue -> T&
+    Tagged tagged_event;
+    tagged_event.store(std::string{ "test" });
+    static_assert(std::is_same_v<decltype(tagged_event.get<0>()), std::string &>);
+
+    // Const lvalue -> const T&
+    const Tagged &const_ref = tagged_event;
+    static_assert(std::is_same_v<decltype(const_ref.get<0>()), const std::string &>);
+
+    // Verify no copies when accessing via reference
+    reset_tracking();
+    {
+      ev_loop::TaggedEvent<TrackedString, int> tracked;
+      tracked.store(TrackedString{ "reftest" });
+      const int constructs_before = constructed_count;
+
+      // Getting reference should not copy or move
+      TrackedString &ref = tracked.get<0>();
+      REQUIRE(ref.value == "reftest");
+      REQUIRE(constructed_count == constructs_before);
+      REQUIRE(copy_count == 0);
+    }
+  }
+
   SECTION("empty after move")
   {
     reset_tracking();
@@ -227,7 +261,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     const ev_loop::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
 
     // After move, index should be max value for the tag type (uninitialized)
-    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved) - intentionally testing post-move state
+    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
     REQUIRE(tagged_event1.index() == std::numeric_limits<ev_loop::tag_type_t<2>>::max());
   }
 }
