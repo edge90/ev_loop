@@ -1111,14 +1111,9 @@ public:
   // Emit from EV thread (uses local queue)
   template<typename Event> void emit(Event &&event) { queue_event<false>(std::forward<Event>(event)); }
 
-  template<typename Receiver> [[nodiscard]] Receiver &get() &
+  template<typename Receiver, typename Self> [[nodiscard]] auto &get(this Self &self)
   {
-    return std::get<ReceiverStorage<Receiver, self_type>>(receivers_)->get();
-  }
-
-  template<typename Receiver> [[nodiscard]] const Receiver &get() const &
-  {
-    return std::get<ReceiverStorage<Receiver, self_type>>(receivers_)->get();
+    return std::get<ReceiverStorage<Receiver, self_type>>(self.receivers_)->get();
   }
 
   // Get an emitter handle for external code to inject events
