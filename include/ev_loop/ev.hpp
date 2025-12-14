@@ -111,8 +111,16 @@ template<typename... Events> class TaggedEvent
   static constexpr std::size_t storage_align = sizeof...(Events) == 0 ? 1 : const_max<alignof(Events)...>();
   static constexpr bool all_trivial = (std::is_trivially_copyable_v<Events> && ...);
 
+  // MSVC C4324: structure was padded due to alignment specifier
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
   alignas(storage_align) std::array<std::byte, storage_size> storage;
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
   tag_type tag = uninitialized_tag;
 
 public:
@@ -438,11 +446,19 @@ public:
   [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
 
 private:
+  // MSVC C4324: structure was padded due to alignment specifier (intentional for cache line separation)
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
   alignas(cache_line_size) std::array<T, Capacity> buffer_{};
   alignas(cache_line_size) T current_{};
   alignas(cache_line_size) std::atomic<std::size_t> head_{ 0 };
   alignas(cache_line_size) std::atomic<std::size_t> tail_{ 0 };
   alignas(cache_line_size) std::atomic<bool> stop_{ false };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 };
 
 // =============================================================================
