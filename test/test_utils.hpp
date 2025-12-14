@@ -27,17 +27,17 @@ struct TrackedString
 
   TrackedString() { ++constructed_count; }
   explicit TrackedString(std::string str) : value(std::move(str)) { ++constructed_count; }
-  TrackedString(const TrackedString& other) : value(other.value)
+  TrackedString(const TrackedString &other) : value(other.value)
   {
     ++constructed_count;
     ++copy_count;
   }
-  TrackedString(TrackedString&& other) noexcept : value(std::move(other.value))
+  TrackedString(TrackedString &&other) noexcept : value(std::move(other.value))
   {
     ++constructed_count;
     ++move_count;
   }
-  TrackedString& operator=(const TrackedString& other)
+  TrackedString &operator=(const TrackedString &other)
   {
     if (this != &other) {
       value = other.value;
@@ -45,7 +45,7 @@ struct TrackedString
     }
     return *this;
   }
-  TrackedString& operator=(TrackedString&& other) noexcept
+  TrackedString &operator=(TrackedString &&other) noexcept
   {
     if (this != &other) {
       value = std::move(other.value);
@@ -55,5 +55,5 @@ struct TrackedString
   }
   ~TrackedString() { ++destructed_count; }
 
-  bool operator==(const TrackedString& other) const { return value == other.value; }
+  bool operator==(const TrackedString &other) const { return value == other.value; }
 };

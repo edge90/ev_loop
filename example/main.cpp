@@ -46,13 +46,13 @@ struct Logger
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(const LogEvent& event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(const LogEvent &event, Dispatcher & /*dispatcher*/)
   {
     std::println("[LOG] {}", event.message);
   }
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(const ProcessedEvent& event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(const ProcessedEvent &event, Dispatcher & /*dispatcher*/)
   {
     std::println("[RESULT] Source {}: {}", event.source_id, event.result);
   }

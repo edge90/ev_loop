@@ -30,7 +30,7 @@ struct A
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher &dispatcher)
   {
     dispatcher.emit(Ping{ event.value + 1 });
   }
@@ -49,7 +49,7 @@ struct B
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher &dispatcher)
   {
     dispatcher.emit(Pong{ event.value + 1 });
   }
@@ -61,15 +61,14 @@ struct B
 
 namespace {
 
-template<typename Count, typename Duration>
-auto events_per_second(Count event_count, Duration elapsed) -> long long
+template<typename Count, typename Duration> auto events_per_second(Count event_count, Duration elapsed) -> long long
 {
   using seconds_double = std::chrono::duration<double>;
   auto seconds = std::chrono::duration_cast<seconds_double>(elapsed).count();
   return static_cast<long long>(static_cast<double>(event_count) / seconds);
 }
 
-}  // namespace
+}// namespace
 
 // NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in benchmarks
 int main()
@@ -89,8 +88,9 @@ int main()
   for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
   auto elapsed = steady_clock::now() - started;
 
-  std::println("poll(): {} us ({} events/sec)", duration_cast<microseconds>(elapsed).count(),
-               events_per_second(kIterations, elapsed));
+  std::println("poll(): {} us ({} events/sec)",
+    duration_cast<microseconds>(elapsed).count(),
+    events_per_second(kIterations, elapsed));
 
   loop.stop();
 

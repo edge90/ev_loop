@@ -22,10 +22,10 @@ struct HeapEvent
 
   HeapEvent() = default;
   explicit HeapEvent(int val) : ptr(std::make_unique<int>(val)) {}
-  HeapEvent(const HeapEvent&) = delete;
-  HeapEvent& operator=(const HeapEvent&) = delete;
-  HeapEvent(HeapEvent&&) = default;
-  HeapEvent& operator=(HeapEvent&&) = default;
+  HeapEvent(const HeapEvent &) = delete;
+  HeapEvent &operator=(const HeapEvent &) = delete;
+  HeapEvent(HeapEvent &&) = default;
+  HeapEvent &operator=(HeapEvent &&) = default;
   ~HeapEvent() = default;
 
   [[nodiscard]] int value() const { return ptr ? *ptr : -1; }
@@ -115,7 +115,8 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       ev_loop::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
       REQUIRE(tagged_event2.get<0>().value == "moveme");
       REQUIRE(tagged_event2.index() == 0U);
-      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
+      // intentionally testing post-move state
+      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
       REQUIRE(tagged_event1.index() == kUninitializedTag);
 
       REQUIRE(constructed_count == before_construct + 1);
@@ -138,7 +139,8 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "source");
-      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
+      // intentionally testing post-move state
+      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
       REQUIRE(tagged_event1.index() == kUninitializedTag);
 
       REQUIRE(destructed_count > before_destruct);
@@ -261,7 +263,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     const ev_loop::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
 
     // After move, index should be max value for the tag type (uninitialized)
-    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move) - intentionally testing post-move state
+    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
     REQUIRE(tagged_event1.index() == std::numeric_limits<ev_loop::tag_type_t<2>>::max());
   }
 }
@@ -310,8 +312,8 @@ TEST_CASE("tag_type_selector", "[tagged_event]")
     REQUIRE(small_tagged.index() == kUninitializedTag);
 
     // Verify the tag type sizes are what we expect
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall);   // uint8_t
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium);  // uint16_t
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge); // uint32_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall);// uint8_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium);// uint16_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge);// uint32_t
   }
 }

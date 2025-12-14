@@ -14,7 +14,7 @@ struct BuilderReceiverA
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   int sum = 0;
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(TestEvent event, Dispatcher& /*dispatcher*/) { sum += event.value; }
+  template<typename Dispatcher> void on_event(TestEvent event, Dispatcher & /*dispatcher*/) { sum += event.value; }
 };
 
 struct BuilderReceiverB
@@ -24,12 +24,12 @@ struct BuilderReceiverB
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   int sum = 0;
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(TestEvent event, Dispatcher& /*dispatcher*/) { sum += event.value; }
+  template<typename Dispatcher> void on_event(TestEvent event, Dispatcher & /*dispatcher*/) { sum += event.value; }
 };
 
 namespace {
 constexpr int kTestValue = 42;
-}  // namespace
+}// namespace
 
 TEST_CASE("Builder", "[builder]")
 {

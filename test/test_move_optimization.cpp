@@ -9,7 +9,7 @@
 
 namespace {
 constexpr int kPollDelayMs = 1;
-}  // namespace
+}// namespace
 
 // =============================================================================
 // Same thread receivers
@@ -22,10 +22,7 @@ struct TrackedReceiver1
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
-  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
-  {
-    ++received;
-  }
+  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher & /*dispatcher*/) { ++received; }
 };
 
 struct TrackedReceiver2
@@ -35,10 +32,7 @@ struct TrackedReceiver2
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
-  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
-  {
-    ++received;
-  }
+  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher & /*dispatcher*/) { ++received; }
 };
 
 struct TrackedReceiver3
@@ -48,10 +42,7 @@ struct TrackedReceiver3
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
-  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
-  {
-    ++received;
-  }
+  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher & /*dispatcher*/) { ++received; }
 };
 
 // =============================================================================
@@ -65,10 +56,7 @@ struct TrackedOwnThreadReceiver1
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
   std::atomic<int> received{ 0 };
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
-  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
-  {
-    ++received;
-  }
+  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher & /*dispatcher*/) { ++received; }
 };
 
 struct TrackedOwnThreadReceiver2
@@ -78,10 +66,7 @@ struct TrackedOwnThreadReceiver2
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
   std::atomic<int> received{ 0 };
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
-  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/)
-  {
-    ++received;
-  }
+  template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher & /*dispatcher*/) { ++received; }
 };
 
 // =============================================================================
