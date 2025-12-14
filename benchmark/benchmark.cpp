@@ -69,7 +69,7 @@ template<typename Count, typename Duration> auto events_per_second(Count event_c
   return static_cast<long long>(static_cast<double>(event_count) / seconds);
 }
 
-}// namespace
+} // namespace
 
 // NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in benchmarks
 int main()

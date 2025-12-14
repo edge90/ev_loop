@@ -360,8 +360,8 @@ TEST_CASE("tag_type_selector", "[tagged_event]")
     REQUIRE(small_tagged.index() == kUninitializedTag);
 
     // Verify the tag type sizes are what we expect
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall);// uint8_t
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium);// uint16_t
-    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge);// uint32_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall); // uint8_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium); // uint16_t
+    REQUIRE(sizeof(ev_loop::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge); // uint32_t
   }
 }

@@ -29,7 +29,7 @@ struct BuilderReceiverB
 
 namespace {
 constexpr int kTestValue = 42;
-}// namespace
+} // namespace
 
 TEST_CASE("Builder", "[builder]")
 {

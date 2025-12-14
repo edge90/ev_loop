@@ -9,7 +9,7 @@
 
 namespace {
 constexpr int kPollDelayMs = 1;
-}// namespace
+} // namespace
 
 // =============================================================================
 // Same thread receivers

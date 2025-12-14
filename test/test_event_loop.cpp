@@ -11,7 +11,7 @@ constexpr int kPingPongExpectedCount = 6;
 constexpr int kPingPongLastValue = 11;
 constexpr std::size_t kLongStringSize = 1000;
 constexpr std::size_t kHybridSpinCount = 10;
-}// namespace
+} // namespace
 
 // =============================================================================
 // Event types

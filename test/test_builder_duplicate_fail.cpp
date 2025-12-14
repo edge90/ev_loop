@@ -22,7 +22,7 @@ int main()
   // "Receiver type is already registered in this Builder"
   auto loop = ev_loop::Builder{}
                 .add<MyReceiver>()
-                .add<MyReceiver>()// Duplicate - should trigger static_assert
+                .add<MyReceiver>() // Duplicate - should trigger static_assert
                 .build();
 
   (void)loop;
