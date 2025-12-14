@@ -22,7 +22,7 @@ constexpr int kPollDelayMs = 1;
 constexpr int kSettleDelayMs = 10;
 constexpr int kSpinDelayUs = 100;
 constexpr std::size_t kHybridSpinCount = 100;
-}  // namespace
+}// namespace
 
 // =============================================================================
 // Event types
@@ -67,7 +67,7 @@ struct ThreadedPingReceiver
   std::atomic<int> received_count{ 0 };
   std::atomic<int> last_value{ 0 };
 
-  template<typename Dispatcher> void on_event(PongEvent event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(PongEvent event, Dispatcher &dispatcher)
   {
     received_count.fetch_add(1, std::memory_order_relaxed);
     last_value.store(event.value, std::memory_order_relaxed);
@@ -84,7 +84,7 @@ struct ThreadedPongReceiver
 
   std::atomic<int> received_count{ 0 };
 
-  template<typename Dispatcher> void on_event(PingEvent event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(PingEvent event, Dispatcher &dispatcher)
   {
     received_count.fetch_add(1, std::memory_order_relaxed);
     dispatcher.emit(PongEvent{ event.value + 1 });
@@ -101,7 +101,7 @@ struct ThreadedStringReceiver
   std::mutex mutex;
   std::vector<std::string> received;
 
-  template<typename Dispatcher> void on_event(StringEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(StringEvent event, Dispatcher & /*dispatcher*/)
   {
     {
       const std::scoped_lock lock(mutex);
@@ -147,7 +147,7 @@ TEST_CASE("EventLoop own thread string events", "[event_loop][own_thread]")
 
   loop.stop();
 
-  auto& receiver = loop.get<ThreadedStringReceiver>();
+  auto &receiver = loop.get<ThreadedStringReceiver>();
   REQUIRE(receiver.received.size() == static_cast<std::size_t>(kEventCount));
 }
 
@@ -164,7 +164,7 @@ struct SameThreadCounter
   int count = 0;
   int sum = 0;
 
-  template<typename Dispatcher> void on_event(MixedEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(MixedEvent event, Dispatcher & /*dispatcher*/)
   {
     ++count;
     sum += event.value;
@@ -180,7 +180,7 @@ struct OwnThreadCounter
   std::atomic<int> count{ 0 };
   std::atomic<int> sum{ 0 };
 
-  template<typename Dispatcher> void on_event(MixedEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(MixedEvent event, Dispatcher & /*dispatcher*/)
   {
     ++count;
     sum += event.value;
@@ -220,7 +220,7 @@ struct CrossA_SameThread
   int received_count = 0;
   int last_value = 0;
 
-  template<typename Dispatcher> void on_event(CrossPong event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(CrossPong event, Dispatcher &dispatcher)
   {
     ++received_count;
     last_value = event.value;
@@ -237,7 +237,7 @@ struct CrossD_OwnThread
 
   std::atomic<int> received_count{ 0 };
 
-  template<typename Dispatcher> void on_event(CrossPing event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(CrossPing event, Dispatcher &dispatcher)
   {
     received_count.fetch_add(1, std::memory_order_relaxed);
     dispatcher.emit(CrossPong{ event.value + 1 });
@@ -254,7 +254,7 @@ struct CrossD_OwnThread_Starter
   std::atomic<int> received_count{ 0 };
   std::atomic<int> last_value{ 0 };
 
-  template<typename Dispatcher> void on_event(CrossPong event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(CrossPong event, Dispatcher &dispatcher)
   {
     received_count.fetch_add(1, std::memory_order_relaxed);
     last_value.store(event.value, std::memory_order_relaxed);
@@ -271,7 +271,7 @@ struct CrossA_SameThread_Relay
 
   int received_count = 0;
 
-  template<typename Dispatcher> void on_event(CrossPing event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(CrossPing event, Dispatcher &dispatcher)
   {
     ++received_count;
     dispatcher.emit(CrossPong{ event.value + 1 });
@@ -336,9 +336,7 @@ TEST_CASE("EventLoop cross thread with Wait strategy", "[event_loop][wait]")
   });
 
   // Wait for expected count instead of threshold + sleep
-  while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) {
-    std::this_thread::yield();
-  }
+  while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) { std::this_thread::yield(); }
 
   loop.stop();
   wait_thread.join();
@@ -362,9 +360,7 @@ TEST_CASE("EventLoop cross thread with Hybrid strategy", "[event_loop][hybrid]")
   });
 
   // Wait for expected count
-  while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) {
-    std::this_thread::yield();
-  }
+  while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) { std::this_thread::yield(); }
 
   loop.stop();
   hybrid_thread.join();
@@ -391,7 +387,7 @@ struct ExternalThreadReceiver
   std::atomic<int> count{ 0 };
   std::atomic<int> sum{ 0 };
 
-  template<typename Dispatcher> void on_event(ExternalThreadEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(ExternalThreadEvent event, Dispatcher & /*dispatcher*/)
   {
     count.fetch_add(1, std::memory_order_relaxed);
     sum.fetch_add(event.value, std::memory_order_relaxed);

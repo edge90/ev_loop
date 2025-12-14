@@ -11,7 +11,7 @@ constexpr int kPingPongExpectedCount = 6;
 constexpr int kPingPongLastValue = 11;
 constexpr std::size_t kLongStringSize = 1000;
 constexpr std::size_t kHybridSpinCount = 10;
-}  // namespace
+}// namespace
 
 // =============================================================================
 // Event types
@@ -44,7 +44,7 @@ struct PingReceiver
   int received_count = 0;
   int last_value = 0;
 
-  template<typename Dispatcher> void on_event(PongEvent event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(PongEvent event, Dispatcher &dispatcher)
   {
     ++received_count;
     last_value = event.value;
@@ -61,7 +61,7 @@ struct PongReceiver
 
   int received_count = 0;
 
-  template<typename Dispatcher> void on_event(PingEvent event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(PingEvent event, Dispatcher &dispatcher)
   {
     ++received_count;
     dispatcher.emit(PongEvent{ event.value + 1 });
@@ -76,7 +76,7 @@ struct StringReceiver
 
   std::vector<std::string> received;
 
-  template<typename Dispatcher> void on_event(StringEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(StringEvent event, Dispatcher & /*dispatcher*/)
   {
     received.push_back(std::move(event.data));
   }
@@ -171,7 +171,7 @@ struct FanoutReceiverA
   // cppcheck-suppress unusedStructMember
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
-  template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher & /*dispatcher*/)
   {
     values.push_back(event.value);
   }
@@ -183,7 +183,7 @@ struct FanoutReceiverB
   // cppcheck-suppress unusedStructMember
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
-  template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher & /*dispatcher*/)
   {
     values.push_back(event.value);
   }
@@ -195,7 +195,7 @@ struct FanoutReceiverC
   // cppcheck-suppress unusedStructMember
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
-  template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher & /*dispatcher*/)
   {
     values.push_back(event.value);
   }
@@ -232,4 +232,3 @@ TEST_CASE("EventLoop fanout", "[event_loop]")
   REQUIRE(loop.get<FanoutReceiverC>().values[1] == 2);
   REQUIRE(loop.get<FanoutReceiverC>().values[2] == 3);
 }
-
