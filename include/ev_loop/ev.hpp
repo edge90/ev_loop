@@ -1159,10 +1159,7 @@ public:
   }
 
   // Get an emitter handle for external code to inject events
-  [[nodiscard]] ExternalEmitter<self_type> get_external_emitter() noexcept
-  {
-    return ExternalEmitter<self_type>(this);
-  }
+  [[nodiscard]] ExternalEmitter<self_type> get_external_emitter() noexcept { return ExternalEmitter<self_type>(this); }
 
 private:
   friend class SameThreadDispatcher<self_type>;
