@@ -46,13 +46,13 @@ struct Logger
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(LogEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(const LogEvent& event, Dispatcher& /*dispatcher*/)
   {
     std::println("[LOG] {}", event.message);
   }
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(ProcessedEvent event, Dispatcher& /*dispatcher*/)
+  template<typename Dispatcher> void on_event(const ProcessedEvent& event, Dispatcher& /*dispatcher*/)
   {
     std::println("[RESULT] Source {}: {}", event.source_id, event.result);
   }
@@ -71,7 +71,7 @@ struct Controller
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(StartEvent event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(StartEvent event, Dispatcher &dispatcher)
   {
     dispatcher.emit(LogEvent{ "Controller received start event #" + std::to_string(event.id) });
     dispatcher.emit(DataEvent{ "payload_" + std::to_string(event.id) });
@@ -92,7 +92,7 @@ struct Processor
 
   int counter = 0;
 
-  template<typename Dispatcher> void on_event(const DataEvent& event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(const DataEvent &event, Dispatcher &dispatcher)
   {
     ++counter;
     const std::string result = "processed(" + event.data + ")";
@@ -114,11 +114,11 @@ struct ChainHandler
   // cppcheck-suppress unusedStructMember
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
-  int max_depth = 5;
-
-  // cppcheck-suppress functionConst ; on_event must be non-const for ev library
-  template<typename Dispatcher> void on_event(ChainEvent event, Dispatcher& dispatcher)
+  // cppcheck-suppress functionStatic ; on_event must be member function for ev library
+  template<typename Dispatcher> void on_event(ChainEvent event, Dispatcher &dispatcher)
   {
+    static constexpr int max_depth = 5;
+
     dispatcher.emit(LogEvent{ "ChainHandler at depth " + std::to_string(event.depth) });
     if (event.depth < max_depth) {
       // This goes through the central queue, not direct recursion!
@@ -134,7 +134,7 @@ struct ChainHandler
 namespace {
 constexpr int kMaxPollIterations = 100;
 constexpr int kThreadedReceiverDelayMs = 50;
-}  // namespace
+}// namespace
 
 // NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in examples
 int main()

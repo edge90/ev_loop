@@ -195,18 +195,18 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 #endif
       REQUIRE(tagged_event.get<0>().value == "selftest");
 
-#if defined(__clang__)
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wself-move"
-#elif defined(__GNUC__)
+#elifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wself-move"
 #endif
       // MSVC does not warn on self-move
       tagged_event = std::move(tagged_event);
-#if defined(__clang__)
+#ifdef __clang__
 #pragma clang diagnostic pop
-#elif defined(__GNUC__)
+#elifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
       REQUIRE(tagged_event.get<0>().value == "selftest");
