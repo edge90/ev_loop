@@ -323,48 +323,35 @@ TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][cross_
   REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count == kPingPongExpectedCount);
 }
 
-TEST_CASE("EventLoop cross thread with Wait strategy", "[event_loop][wait]")
+TEST_CASE("EventLoop cross thread blocking strategies", "[event_loop][cross_thread]")
 {
   ev_loop::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
   loop.start();
 
   loop.emit(CrossPing{ 0 });
 
-  // Run Wait strategy in a separate thread so we can stop the loop
-  std::thread wait_thread([&loop] {
-    ev_loop::Wait strategy{ loop };
-    strategy.run();
-  });
+  std::thread strategy_thread;
 
-  // Wait for expected count instead of threshold + sleep
+  SECTION("Wait strategy")
+  {
+    strategy_thread = std::thread([&loop] {
+      ev_loop::Wait strategy{ loop };
+      strategy.run();
+    });
+  }
+
+  SECTION("Hybrid strategy")
+  {
+    strategy_thread = std::thread([&loop] {
+      ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
+      strategy.run();
+    });
+  }
+
   while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) { std::this_thread::yield(); }
 
   loop.stop();
-  wait_thread.join();
-
-  REQUIRE(loop.get<CrossA_SameThread_Relay>().received_count == kPingPongExpectedCount);
-  REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count == kPingPongExpectedCount);
-}
-
-TEST_CASE("EventLoop cross thread with Hybrid strategy", "[event_loop][hybrid]")
-{
-  ev_loop::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
-  loop.start();
-
-  loop.emit(CrossPing{ 0 });
-
-  // Run Hybrid strategy in a separate thread so we can stop the loop
-  // (Hybrid can block in wait_pop_any after spin count is exceeded)
-  std::thread hybrid_thread([&loop] {
-    ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
-    strategy.run();
-  });
-
-  // Wait for expected count
-  while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) { std::this_thread::yield(); }
-
-  loop.stop();
-  hybrid_thread.join();
+  strategy_thread.join();
 
   REQUIRE(loop.get<CrossA_SameThread_Relay>().received_count == kPingPongExpectedCount);
   REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count == kPingPongExpectedCount);

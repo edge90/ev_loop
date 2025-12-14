@@ -86,47 +86,28 @@ struct StringReceiver
 // Same thread tests
 // =============================================================================
 
-TEST_CASE("EventLoop ping pong with Spin strategy", "[event_loop][spin]")
+TEST_CASE("EventLoop ping pong", "[event_loop]")
 {
   ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
   loop.start();
 
   loop.emit(PingEvent{ 0 });
 
-  while (ev_loop::Spin{ loop }.poll()) {}
+  SECTION("Spin strategy")
+  {
+    while (ev_loop::Spin{ loop }.poll()) {}
+  }
 
-  REQUIRE(loop.get<PingReceiver>().received_count == kPingPongExpectedCount);
-  REQUIRE(loop.get<PongReceiver>().received_count == kPingPongExpectedCount);
-  REQUIRE(loop.get<PingReceiver>().last_value == kPingPongLastValue);
+  SECTION("Yield strategy")
+  {
+    while (ev_loop::Yield{ loop }.poll()) {}
+  }
 
-  loop.stop();
-}
-
-TEST_CASE("EventLoop ping pong with Yield strategy", "[event_loop][yield]")
-{
-  ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
-  loop.start();
-
-  loop.emit(PingEvent{ 0 });
-
-  while (ev_loop::Yield{ loop }.poll()) {}
-
-  REQUIRE(loop.get<PingReceiver>().received_count == kPingPongExpectedCount);
-  REQUIRE(loop.get<PongReceiver>().received_count == kPingPongExpectedCount);
-  REQUIRE(loop.get<PingReceiver>().last_value == kPingPongLastValue);
-
-  loop.stop();
-}
-
-TEST_CASE("EventLoop ping pong with Hybrid strategy", "[event_loop][hybrid]")
-{
-  ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
-  loop.start();
-
-  loop.emit(PingEvent{ 0 });
-
-  ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
-  while (strategy.poll()) {}
+  SECTION("Hybrid strategy")
+  {
+    ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
+    while (strategy.poll()) {}
+  }
 
   REQUIRE(loop.get<PingReceiver>().received_count == kPingPongExpectedCount);
   REQUIRE(loop.get<PongReceiver>().received_count == kPingPongExpectedCount);
