@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstddef>
 #include <ev_loop/ev.hpp>
 #include <print>
 #include <tuple>
@@ -73,26 +74,82 @@ template<typename Count, typename Duration> auto events_per_second(Count event_c
 // NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in benchmarks
 int main()
 {
-  ev_loop::EventLoop<A, B> loop;
-
-  loop.start();
-
-  loop.emit(Ping{ 0 });
-
   using namespace std::chrono;
 
   constexpr int kIterations = 10'000'000;
+  constexpr std::size_t kHybridSpinCount = 1000;
 
-  ev_loop::Spin strategy{ loop };
-  auto started = steady_clock::now();
-  for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
-  auto elapsed = steady_clock::now() - started;
+  // Spin strategy benchmark
+  {
+    ev_loop::EventLoop<A, B> loop;
+    loop.start();
+    loop.emit(Ping{ 0 });
 
-  std::println("poll(): {} us ({} events/sec)",
-    duration_cast<microseconds>(elapsed).count(),
-    events_per_second(kIterations, elapsed));
+    ev_loop::Spin strategy{ loop };
+    auto started = steady_clock::now();
+    for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
+    auto elapsed = steady_clock::now() - started;
 
-  loop.stop();
+    std::println("Spin::poll():   {} us ({} events/sec)",
+      duration_cast<microseconds>(elapsed).count(),
+      events_per_second(kIterations, elapsed));
+
+    loop.stop();
+  }
+
+  // Yield strategy benchmark
+  {
+    ev_loop::EventLoop<A, B> loop;
+    loop.start();
+    loop.emit(Ping{ 0 });
+
+    ev_loop::Yield strategy{ loop };
+    auto started = steady_clock::now();
+    for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
+    auto elapsed = steady_clock::now() - started;
+
+    std::println("Yield::poll():  {} us ({} events/sec)",
+      duration_cast<microseconds>(elapsed).count(),
+      events_per_second(kIterations, elapsed));
+
+    loop.stop();
+  }
+
+  // Hybrid strategy benchmark
+  {
+    ev_loop::EventLoop<A, B> loop;
+    loop.start();
+    loop.emit(Ping{ 0 });
+
+    ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
+    auto started = steady_clock::now();
+    for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
+    auto elapsed = steady_clock::now() - started;
+
+    std::println("Hybrid::poll(): {} us ({} events/sec)",
+      duration_cast<microseconds>(elapsed).count(),
+      events_per_second(kIterations, elapsed));
+
+    loop.stop();
+  }
+
+  // Wait strategy benchmark
+  {
+    ev_loop::EventLoop<A, B> loop;
+    loop.start();
+    loop.emit(Ping{ 0 });
+
+    ev_loop::Wait strategy{ loop };
+    auto started = steady_clock::now();
+    for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
+    auto elapsed = steady_clock::now() - started;
+
+    std::println("Wait::poll():   {} us ({} events/sec)",
+      duration_cast<microseconds>(elapsed).count(),
+      events_per_second(kIterations, elapsed));
+
+    loop.stop();
+  }
 
   return 0;
 }

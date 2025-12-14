@@ -226,6 +226,54 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     REQUIRE(tagged_event2.get<0>().value() == kTestInt);
   }
 
+  SECTION("move assignment with move only type")
+  {
+    ev_loop::TaggedEvent<HeapEvent, int> tagged_event1;
+    tagged_event1.store(HeapEvent{ kTestInt });
+
+    ev_loop::TaggedEvent<HeapEvent, int> tagged_event2;
+    tagged_event2.store(HeapEvent{ kTestInt2 });
+
+    tagged_event2 = std::move(tagged_event1);
+    REQUIRE(tagged_event2.get<0>().value() == kTestInt);
+    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+    REQUIRE(tagged_event1.index() == kUninitializedTag);
+  }
+
+  SECTION("move assignment to uninitialized")
+  {
+    reset_tracking();
+    {
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event1;
+      tagged_event1.store(TrackedString{ "source" });
+
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event2;  // uninitialized
+
+      tagged_event2 = std::move(tagged_event1);
+      REQUIRE(tagged_event2.get<0>().value == "source");
+      // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
+      REQUIRE(tagged_event1.index() == kUninitializedTag);
+    }
+    REQUIRE(constructed_count == destructed_count);
+  }
+
+  SECTION("move assignment from uninitialized")
+  {
+    reset_tracking();
+    {
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event1;  // uninitialized
+
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event2;
+      tagged_event2.store(TrackedString{ "dest" });
+
+      const int before_destruct = destructed_count;
+      tagged_event2 = std::move(tagged_event1);
+      REQUIRE(tagged_event2.index() == kUninitializedTag);
+      REQUIRE(destructed_count > before_destruct);  // dest was destroyed
+    }
+    REQUIRE(constructed_count == destructed_count);
+  }
+
   SECTION("get returns correct reference types")
   {
     using Tagged = ev_loop::TaggedEvent<std::string, int>;

@@ -91,21 +91,47 @@ TEST_CASE("EventLoop ping pong", "[event_loop]")
   ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
   loop.start();
 
-  loop.emit(PingEvent{ 0 });
-
   SECTION("Spin strategy")
   {
+    // Verify poll returns false when queue is empty
+    REQUIRE_FALSE(ev_loop::Spin{ loop }.poll());
+
+    loop.emit(PingEvent{ 0 });
+
+    // Verify poll returns true when events are pending
+    REQUIRE(ev_loop::Spin{ loop }.poll());
+
+    // Process remaining events
     while (ev_loop::Spin{ loop }.poll()) {}
   }
 
   SECTION("Yield strategy")
   {
+    // Verify poll returns false when queue is empty
+    REQUIRE_FALSE(ev_loop::Yield{ loop }.poll());
+
+    loop.emit(PingEvent{ 0 });
+
+    // Verify poll returns true when events are pending
+    REQUIRE(ev_loop::Yield{ loop }.poll());
+
+    // Process remaining events
     while (ev_loop::Yield{ loop }.poll()) {}
   }
 
   SECTION("Hybrid strategy")
   {
     ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
+
+    // Verify poll returns false when queue is empty
+    REQUIRE_FALSE(strategy.poll());
+
+    loop.emit(PingEvent{ 0 });
+
+    // Verify poll returns true when events are pending
+    REQUIRE(strategy.poll());
+
+    // Process remaining events
     while (strategy.poll()) {}
   }
 
