@@ -320,3 +320,53 @@ TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][thread
   REQUIRE(loop.get<CrossA_SameThread_Relay>().received_count == kPingPongExpectedCount);
   REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count.load() == kPingPongExpectedCount);
 }
+
+// =============================================================================
+// ExternalEmitter threaded tests
+// =============================================================================
+
+struct ExternalThreadEvent
+{
+  int value;
+};
+
+struct ExternalThreadReceiver
+{
+  using receives = ev_loop::type_list<ExternalThreadEvent>;
+  // cppcheck-suppress unusedStructMember
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+
+  std::atomic<int> count{ 0 };
+  std::atomic<int> sum{ 0 };
+
+  template<typename Dispatcher> void on_event(ExternalThreadEvent event, Dispatcher& /*dispatcher*/)
+  {
+    count.fetch_add(1, std::memory_order_relaxed);
+    sum.fetch_add(event.value, std::memory_order_relaxed);
+  }
+};
+
+TEST_CASE("ExternalEmitter from another thread", "[external_emitter][threaded]")
+{
+  ev_loop::EventLoop<ExternalThreadReceiver> loop;
+  loop.start();
+
+  auto emitter = loop.get_external_emitter();
+
+  // Emit events from a separate thread
+  std::thread producer([&emitter] {
+    for (int i = 1; i <= kEventCount; ++i) { emitter.emit(ExternalThreadEvent{ i }); }
+  });
+
+  producer.join();
+
+  // Wait for OwnThread receiver to process all events
+  while (loop.get<ExternalThreadReceiver>().count < kEventCount) { std::this_thread::yield(); }
+
+  loop.stop();
+
+  // Sum of 1..100 = 5050
+  constexpr int kExpectedSum = kEventCount * (kEventCount + 1) / 2;
+  REQUIRE(loop.get<ExternalThreadReceiver>().count == kEventCount);
+  REQUIRE(loop.get<ExternalThreadReceiver>().sum == kExpectedSum);
+}

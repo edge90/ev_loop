@@ -710,6 +710,8 @@ template<typename EventLoopType> class SameThreadDispatcher;
 
 template<typename Emitter, typename EventLoopType> class OwnThreadDispatcher;
 
+template<typename EventLoopType> class ExternalEmitter;
+
 // =============================================================================
 // Same-thread receiver wrapper
 // =============================================================================
@@ -1109,12 +1111,6 @@ public:
   // Emit from EV thread (uses local queue)
   template<typename Event> void emit(Event &&event) { queue_event<false>(std::forward<Event>(event)); }
 
-  // Called by SameThreadDispatcher (uses local queue)
-  template<typename Event> void queue_local(Event &&event) { queue_event<false>(std::forward<Event>(event)); }
-
-  // Called by OwnThreadDispatcher (uses remote queue with synchronization)
-  template<typename Event> void queue_remote(Event &&event) { queue_event<true>(std::forward<Event>(event)); }
-
   template<typename Receiver> [[nodiscard]] Receiver &get() &
   {
     return std::get<ReceiverStorage<Receiver, self_type>>(receivers_)->get();
@@ -1125,7 +1121,23 @@ public:
     return std::get<ReceiverStorage<Receiver, self_type>>(receivers_)->get();
   }
 
+  // Get an emitter handle for external code to inject events
+  [[nodiscard]] ExternalEmitter<self_type> get_external_emitter() noexcept
+  {
+    return ExternalEmitter<self_type>(this);
+  }
+
 private:
+  friend class SameThreadDispatcher<self_type>;
+  template<typename, typename> friend class OwnThreadDispatcher;
+  friend class ExternalEmitter<self_type>;
+
+  // Called by SameThreadDispatcher (uses local queue)
+  template<typename Event> void queue_local(Event &&event) { queue_event<false>(std::forward<Event>(event)); }
+
+  // Called by OwnThreadDispatcher and ExternalEmitter (uses remote queue with synchronization)
+  template<typename Event> void queue_remote(Event &&event) { queue_event<true>(std::forward<Event>(event)); }
+
   template<bool Remote, typename Event> void queue_event(Event &&event)
   {
     constexpr bool has_same_thread = contains_v<same_thread_events, std::decay_t<Event>>;
@@ -1280,6 +1292,21 @@ template<typename Emitter, typename EventLoopType> class OwnThreadDispatcher
 {
 public:
   explicit OwnThreadDispatcher(EventLoopType *loop) : event_loop_(loop) {}
+
+  template<typename Event> void emit(Event &&event) { event_loop_->queue_remote(std::forward<Event>(event)); }
+
+private:
+  EventLoopType *event_loop_;
+};
+
+// =============================================================================
+// External emitter - allows code outside the event loop to inject events
+// =============================================================================
+
+template<typename EventLoopType> class ExternalEmitter
+{
+public:
+  explicit ExternalEmitter(EventLoopType *loop) noexcept : event_loop_(loop) {}
 
   template<typename Event> void emit(Event &&event) { event_loop_->queue_remote(std::forward<Event>(event)); }
 

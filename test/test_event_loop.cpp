@@ -198,3 +198,4 @@ TEST_CASE("EventLoop fanout", "[event_loop]")
   REQUIRE(loop.get<FanoutReceiverC>().values[1] == 2);
   REQUIRE(loop.get<FanoutReceiverC>().values[2] == 3);
 }
+
