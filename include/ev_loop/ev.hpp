@@ -1060,6 +1060,7 @@ template<typename EventLoop> struct Hybrid
   std::size_t spin_count;
   std::size_t empty_spins{ 0 };
 
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
   explicit Hybrid(EventLoop& loop, std::size_t spins = 1000) : event_loop(loop), spin_count(spins) {}
 
   [[nodiscard]] bool poll()
