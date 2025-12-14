@@ -86,6 +86,7 @@ struct StringReceiver
 // Same thread tests
 // =============================================================================
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_CASE("EventLoop ping pong", "[event_loop]")
 {
   ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
