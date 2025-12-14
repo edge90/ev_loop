@@ -53,7 +53,7 @@ TEST_CASE("tag_type_t selects smallest sufficient type", "[constexpr]")
   // uint32_t range: 65535 to uint32_max-1
   STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<65535>) == 4);
   STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<100000>) == 4);
-  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<4294967294UL>) == 4);// max valid value
+  STATIC_REQUIRE(sizeof(ev_loop::tag_type_t<4294967294UL>) == 4); // max valid value
 
   // Values >= uint32_max trigger static_assert: "Too many event types (max ~4 billion)"
 }

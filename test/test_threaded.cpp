@@ -23,7 +23,7 @@ constexpr int kPollDelayMs = 1;
 constexpr int kSettleDelayMs = 10;
 constexpr int kSpinDelayUs = 100;
 constexpr std::size_t kHybridSpinCount = 100;
-}// namespace
+} // namespace
 
 // =============================================================================
 // Event types

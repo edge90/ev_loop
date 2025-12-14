@@ -134,7 +134,7 @@ struct ChainHandler
 namespace {
 constexpr int kMaxPollIterations = 100;
 constexpr int kThreadedReceiverDelayMs = 50;
-}// namespace
+} // namespace
 
 // NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in examples
 int main()

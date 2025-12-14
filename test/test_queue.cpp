@@ -12,7 +12,7 @@ constexpr std::size_t kMediumQueueCapacity = 8;
 constexpr std::size_t kLargeQueueCapacity = 16;
 constexpr int kWraparoundRounds = 10;
 constexpr int kMemoryTestIterations = 100;
-}// namespace
+} // namespace
 
 // =============================================================================
 // RingBuffer Tests

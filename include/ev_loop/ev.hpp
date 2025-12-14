@@ -131,8 +131,8 @@ public:
   {
     if (tag != uninitialized_tag) {
       move_construct_from(std::move(other));
-      other.destroy();// cppcheck-suppress accessMoved ; other.destroy() only resets tag, the moved-from object is in
-                      // valid state
+      other.destroy(); // cppcheck-suppress accessMoved ; other.destroy() only resets tag, the moved-from object is in
+                       // valid state
     }
   }
 
@@ -155,8 +155,8 @@ public:
       tag = other.tag;
       if (tag != uninitialized_tag) {
         move_construct_from(std::move(other));
-        other.destroy();// cppcheck-suppress accessMoved ; other.destroy() only resets tag, the moved-from object is in
-                        // valid state
+        other.destroy(); // cppcheck-suppress accessMoved ; other.destroy() only resets tag, the moved-from object is in
+                         // valid state
       }
     }
     return *this;
@@ -324,8 +324,8 @@ private:
 // =============================================================================
 
 enum class ThreadMode : std::uint8_t {
-  SameThread,// Runs on event loop thread, uses queue dispatch
-  OwnThread// Runs on its own thread, direct push from emitters
+  SameThread, // Runs on event loop thread, uses queue dispatch
+  OwnThread // Runs on its own thread, direct push from emitters
 };
 
 // =============================================================================
@@ -691,12 +691,12 @@ private:
     has_remote_.store(false, std::memory_order_release);
   }
 
-  RingBuffer<TaggedEventType> local_queue_;// Same-thread access only
-  std::queue<TaggedEventType> remote_queue_;// Cross-thread, protected by mutex
+  RingBuffer<TaggedEventType> local_queue_; // Same-thread access only
+  std::queue<TaggedEventType> remote_queue_; // Cross-thread, protected by mutex
   std::mutex mutex_;
   std::condition_variable cv_;
   std::atomic<bool> has_remote_{ false };
-  std::atomic<bool> waiting_{ false };// True when consumer is blocked on CV
+  std::atomic<bool> waiting_{ false }; // True when consumer is blocked on CV
   bool stop_ = false;
 };
 
@@ -808,7 +808,7 @@ public:
     tagged_event tagged;
     tagged.store(std::forward<Event>(event));
     queue_.push(std::move(tagged));
-    queue_.notify();// Wake up consumer
+    queue_.notify(); // Wake up consumer
   }
 
   [[nodiscard]] Receiver& get() & noexcept { return receiver_; }
@@ -1069,7 +1069,7 @@ template<typename EventLoop> struct Hybrid
     auto* event = event_loop.try_get_event();
     if (event != nullptr) {
       event_loop.dispatch_event(*event);
-      empty_spins = 0;// Reset counter on successful dispatch
+      empty_spins = 0; // Reset counter on successful dispatch
       return true;
     }
 
@@ -1412,4 +1412,4 @@ template<typename... Receivers> struct ValidateReceivers
     return (ReceiverValidator<Receivers, EventLoopType>::validate() && ...);
   }
 };
-}// namespace ev_loop
+} // namespace ev_loop

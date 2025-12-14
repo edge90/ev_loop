@@ -16,7 +16,7 @@ template<typename Count, typename Duration> auto events_per_second(Count event_c
   return static_cast<long long>(static_cast<double>(event_count) / seconds);
 }
 
-}// namespace
+} // namespace
 
 // =============================================================================
 // Define event types
@@ -151,7 +151,7 @@ struct D_OwnThread_Starter
 namespace {
 constexpr int kOwnThreadTargetCount = 10'000'000;
 constexpr int kMixedTargetCount = 1'000'000;
-}// namespace
+} // namespace
 
 void benchmark_ownthread_to_ownthread()
 {
