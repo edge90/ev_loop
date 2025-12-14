@@ -247,7 +247,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       ev_loop::TaggedEvent<TrackedString, int> tagged_event1;
       tagged_event1.store(TrackedString{ "source" });
 
-      ev_loop::TaggedEvent<TrackedString, int> tagged_event2;  // uninitialized
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event2;// uninitialized
 
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "source");
@@ -261,7 +261,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
   {
     reset_tracking();
     {
-      ev_loop::TaggedEvent<TrackedString, int> tagged_event1;  // uninitialized
+      ev_loop::TaggedEvent<TrackedString, int> tagged_event1;// uninitialized
 
       ev_loop::TaggedEvent<TrackedString, int> tagged_event2;
       tagged_event2.store(TrackedString{ "dest" });
@@ -269,7 +269,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       const int before_destruct = destructed_count;
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.index() == kUninitializedTag);
-      REQUIRE(destructed_count > before_destruct);  // dest was destroyed
+      REQUIRE(destructed_count > before_destruct);// dest was destroyed
     }
     REQUIRE(constructed_count == destructed_count);
   }
