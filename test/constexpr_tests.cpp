@@ -84,10 +84,10 @@ TEST_CASE("ThreadSafeRingBuffer::is_stopped is noexcept", "[constexpr]")
 TEST_CASE("Ref qualified functions are callable on lvalues", "[constexpr]")
 {
   // RingBuffer (no ref qualifiers on empty/size - they're const)
-  STATIC_REQUIRE(requires(ev_loop::RingBuffer<int> & buf) { buf.empty(); });
-  STATIC_REQUIRE(requires(ev_loop::RingBuffer<int> & buf) { buf.size(); });
+  STATIC_REQUIRE(requires(ev_loop::RingBuffer<int> &buf) { buf.empty(); });
+  STATIC_REQUIRE(requires(ev_loop::RingBuffer<int> &buf) { buf.size(); });
 
   // TaggedEvent::index (const, no ref qualifier needed)
-  STATIC_REQUIRE(requires(ev_loop::TaggedEvent<int> & tagged) { tagged.index(); });
+  STATIC_REQUIRE(requires(ev_loop::TaggedEvent<int> &tagged) { tagged.index(); });
   STATIC_REQUIRE(requires(const ev_loop::TaggedEvent<int> &tagged) { tagged.index(); });
 }

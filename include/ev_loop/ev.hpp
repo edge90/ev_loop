@@ -163,7 +163,8 @@ public:
   }
 
   template<typename E>
-  requires(contains_v<type_list<Events...>, std::decay_t<E>>) explicit TaggedEvent(E &&event)
+    requires(contains_v<type_list<Events...>, std::decay_t<E>>)
+  explicit TaggedEvent(E &&event)
   {
     store(std::forward<E>(event));
   }
@@ -332,23 +333,14 @@ enum class ThreadMode : std::uint8_t {
 // =============================================================================
 
 template<typename T>
-concept has_receives = requires
-{
-  typename T::receives;
-};
+concept has_receives = requires { typename T::receives; };
 
 template<typename T>
-concept has_emits = requires
-{
-  typename T::emits;
-};
+concept has_emits = requires { typename T::emits; };
 
 template<typename T>
-concept has_thread_mode = requires
-{
-  {
-    T::thread_mode
-    } -> std::convertible_to<ThreadMode>;
+concept has_thread_mode = requires {
+  { T::thread_mode } -> std::convertible_to<ThreadMode>;
 };
 
 // Get receives type list, defaults to empty
@@ -439,9 +431,7 @@ public:
   }
 
   // cppcheck-suppress functionStatic ; interface consistency with ThreadSafeRingBuffer
-  void notify()
-  { /* No-op for lock-free */
-  }
+  void notify() { /* No-op for lock-free */ }
 
   void stop() { stop_.store(true, std::memory_order_release); }
 
@@ -746,11 +736,14 @@ public:
 
   // Called by EventLoop to dispatch a queued event
   template<typename Event>
-  requires can_receive<Receiver, std::decay_t<Event>>
-  void dispatch(Event &&event) { receiver_.on_event(std::forward<Event>(event), dispatcher_); }
+    requires can_receive<Receiver, std::decay_t<Event>>
+  void dispatch(Event &&event)
+  {
+    receiver_.on_event(std::forward<Event>(event), dispatcher_);
+  }
 
-  [[nodiscard]] Receiver &get() &noexcept { return receiver_; }
-  [[nodiscard]] const Receiver &get() const &noexcept { return receiver_; }
+  [[nodiscard]] Receiver &get() & noexcept { return receiver_; }
+  [[nodiscard]] const Receiver &get() const & noexcept { return receiver_; }
 
   // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
   void start() noexcept {}
@@ -809,7 +802,7 @@ public:
 
   // Push from any thread (synchronized)
   template<typename Event>
-  requires can_receive<Receiver, Event>
+    requires can_receive<Receiver, Event>
   void push(Event &&event)
   {
     tagged_event tagged;
@@ -818,8 +811,8 @@ public:
     queue_.notify();// Wake up consumer
   }
 
-  [[nodiscard]] Receiver &get() &noexcept { return receiver_; }
-  [[nodiscard]] const Receiver &get() const &noexcept { return receiver_; }
+  [[nodiscard]] Receiver &get() & noexcept { return receiver_; }
+  [[nodiscard]] const Receiver &get() const & noexcept { return receiver_; }
 
   static constexpr ThreadMode mode = ThreadMode::OwnThread;
 
@@ -885,10 +878,10 @@ public:
   ReceiverStorage(ReceiverStorage &&) noexcept = default;
   ReceiverStorage &operator=(ReceiverStorage &&) noexcept = default;
 
-  wrapper_type &operator*() &noexcept { return *wrapper_; }
-  const wrapper_type &operator*() const &noexcept { return *wrapper_; }
-  wrapper_type *operator->() &noexcept { return wrapper_.get(); }
-  const wrapper_type *operator->() const &noexcept { return wrapper_.get(); }
+  wrapper_type &operator*() & noexcept { return *wrapper_; }
+  const wrapper_type &operator*() const & noexcept { return *wrapper_; }
+  wrapper_type *operator->() & noexcept { return wrapper_.get(); }
+  const wrapper_type *operator->() const & noexcept { return wrapper_.get(); }
 
 private:
   std::unique_ptr<wrapper_type> wrapper_;
@@ -948,8 +941,8 @@ template<typename SameThreadEvents> struct emits_to_same_thread<type_list<>, Sam
 
 template<typename E, typename... Es, typename SameThreadEvents>
 struct emits_to_same_thread<type_list<E, Es...>, SameThreadEvents>
-  : std::bool_constant<
-      contains_v<SameThreadEvents, E> || emits_to_same_thread<type_list<Es...>, SameThreadEvents>::value>
+  : std::bool_constant<contains_v<SameThreadEvents, E>
+                       || emits_to_same_thread<type_list<Es...>, SameThreadEvents>::value>
 {
 };
 
@@ -1134,7 +1127,7 @@ public:
   // Strategy accessors - use with Strategy{loop}.run()
   [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
 
-  [[nodiscard]] queue_type &queue() &noexcept { return queue_; }
+  [[nodiscard]] queue_type &queue() & noexcept { return queue_; }
 
   [[nodiscard]] tagged_event *try_get_event()
   {
@@ -1383,8 +1376,7 @@ template<typename... Receivers> struct Builder
 
 // Check if receiver has on_event method for a given event type
 template<typename Receiver, typename Event, typename Dispatcher>
-concept has_on_event_for = requires(Receiver &receiver, Event event, Dispatcher &dispatcher)
-{
+concept has_on_event_for = requires(Receiver &receiver, Event event, Dispatcher &dispatcher) {
   receiver.on_event(std::move(event), dispatcher);
 };
 
