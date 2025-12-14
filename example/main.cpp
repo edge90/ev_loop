@@ -46,13 +46,13 @@ struct Logger
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(const LogEvent &event, Dispatcher & /*dispatcher*/)
+  template<typename Dispatcher> void on_event(const LogEvent& event, Dispatcher& /*dispatcher*/)
   {
     std::println("[LOG] {}", event.message);
   }
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(const ProcessedEvent &event, Dispatcher & /*dispatcher*/)
+  template<typename Dispatcher> void on_event(const ProcessedEvent& event, Dispatcher& /*dispatcher*/)
   {
     std::println("[RESULT] Source {}: {}", event.source_id, event.result);
   }
@@ -71,7 +71,7 @@ struct Controller
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(StartEvent event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(StartEvent event, Dispatcher& dispatcher)
   {
     dispatcher.emit(LogEvent{ "Controller received start event #" + std::to_string(event.id) });
     dispatcher.emit(DataEvent{ "payload_" + std::to_string(event.id) });
@@ -92,7 +92,7 @@ struct Processor
 
   int counter = 0;
 
-  template<typename Dispatcher> void on_event(const DataEvent &event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(const DataEvent& event, Dispatcher& dispatcher)
   {
     ++counter;
     const std::string result = "processed(" + event.data + ")";
@@ -115,7 +115,7 @@ struct ChainHandler
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(ChainEvent event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(ChainEvent event, Dispatcher& dispatcher)
   {
     static constexpr int max_depth = 5;
 

@@ -30,7 +30,7 @@ struct A
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
   {
     dispatcher.emit(Ping{ event.value + 1 });
   }
@@ -49,7 +49,7 @@ struct B
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
   {
     dispatcher.emit(Pong{ event.value + 1 });
   }
