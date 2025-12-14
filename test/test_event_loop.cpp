@@ -10,6 +10,7 @@ constexpr int kPingPongLimit = 10;
 constexpr int kPingPongExpectedCount = 6;
 constexpr int kPingPongLastValue = 11;
 constexpr std::size_t kLongStringSize = 1000;
+constexpr std::size_t kHybridSpinCount = 10;
 }  // namespace
 
 // =============================================================================
@@ -85,7 +86,7 @@ struct StringReceiver
 // Same thread tests
 // =============================================================================
 
-TEST_CASE("EventLoop ping pong", "[event_loop]")
+TEST_CASE("EventLoop ping pong with Spin strategy", "[event_loop][strategy]")
 {
   ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
   loop.start();
@@ -93,6 +94,39 @@ TEST_CASE("EventLoop ping pong", "[event_loop]")
   loop.emit(PingEvent{ 0 });
 
   while (ev_loop::Spin{ loop }.poll()) {}
+
+  REQUIRE(loop.get<PingReceiver>().received_count == kPingPongExpectedCount);
+  REQUIRE(loop.get<PongReceiver>().received_count == kPingPongExpectedCount);
+  REQUIRE(loop.get<PingReceiver>().last_value == kPingPongLastValue);
+
+  loop.stop();
+}
+
+TEST_CASE("EventLoop ping pong with Yield strategy", "[event_loop][strategy]")
+{
+  ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
+  loop.start();
+
+  loop.emit(PingEvent{ 0 });
+
+  while (ev_loop::Yield{ loop }.poll()) {}
+
+  REQUIRE(loop.get<PingReceiver>().received_count == kPingPongExpectedCount);
+  REQUIRE(loop.get<PongReceiver>().received_count == kPingPongExpectedCount);
+  REQUIRE(loop.get<PingReceiver>().last_value == kPingPongLastValue);
+
+  loop.stop();
+}
+
+TEST_CASE("EventLoop ping pong with Hybrid strategy", "[event_loop][strategy]")
+{
+  ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
+  loop.start();
+
+  loop.emit(PingEvent{ 0 });
+
+  ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
+  while (strategy.poll()) {}
 
   REQUIRE(loop.get<PingReceiver>().received_count == kPingPongExpectedCount);
   REQUIRE(loop.get<PongReceiver>().received_count == kPingPongExpectedCount);

@@ -21,6 +21,7 @@ constexpr int kMixedEventCount = 50;
 constexpr int kPollDelayMs = 1;
 constexpr int kSettleDelayMs = 10;
 constexpr int kSpinDelayUs = 100;
+constexpr std::size_t kHybridSpinCount = 100;
 }  // namespace
 
 // =============================================================================
@@ -121,7 +122,7 @@ TEST_CASE("EventLoop own thread ping pong", "[event_loop][threaded]")
 
   loop.emit(PingEvent{ 0 });
 
-  while (loop.get<ThreadedPingReceiver>().last_value.load() < kPingPongLimit + 1) {
+  while (loop.get<ThreadedPingReceiver>().last_value < kPingPongLimit + 1) {
     std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
   }
 
@@ -129,8 +130,8 @@ TEST_CASE("EventLoop own thread ping pong", "[event_loop][threaded]")
 
   loop.stop();
 
-  REQUIRE(loop.get<ThreadedPingReceiver>().received_count.load() == kPingPongExpectedCount);
-  REQUIRE(loop.get<ThreadedPongReceiver>().received_count.load() == kPingPongExpectedCount);
+  REQUIRE(loop.get<ThreadedPingReceiver>().received_count == kPingPongExpectedCount);
+  REQUIRE(loop.get<ThreadedPongReceiver>().received_count == kPingPongExpectedCount);
 }
 
 TEST_CASE("EventLoop own thread string events", "[event_loop][threaded]")
@@ -140,7 +141,7 @@ TEST_CASE("EventLoop own thread string events", "[event_loop][threaded]")
 
   for (int i = 0; i < kEventCount; ++i) { loop.emit(StringEvent{ "message_" + std::to_string(i) }); }
 
-  while (loop.get<ThreadedStringReceiver>().count.load() < kEventCount) {
+  while (loop.get<ThreadedStringReceiver>().count < kEventCount) {
     std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
   }
 
@@ -195,14 +196,14 @@ TEST_CASE("EventLoop mixed threading", "[event_loop][threaded]")
 
   while (ev_loop::Spin{ loop }.poll()) {}
 
-  while (loop.get<OwnThreadCounter>().count.load() < kMixedEventCount) {
+  while (loop.get<OwnThreadCounter>().count < kMixedEventCount) {
     std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
   }
 
   loop.stop();
 
   REQUIRE(loop.get<SameThreadCounter>().count == kMixedEventCount);
-  REQUIRE(loop.get<OwnThreadCounter>().count.load() == kMixedEventCount);
+  REQUIRE(loop.get<OwnThreadCounter>().count == kMixedEventCount);
 }
 
 // =============================================================================
@@ -296,7 +297,7 @@ TEST_CASE("EventLoop cross thread samethread to ownthread", "[event_loop][thread
   loop.stop();
 
   REQUIRE(loop.get<CrossA_SameThread>().received_count == kPingPongExpectedCount);
-  REQUIRE(loop.get<CrossD_OwnThread>().received_count.load() == kPingPongExpectedCount);
+  REQUIRE(loop.get<CrossD_OwnThread>().received_count == kPingPongExpectedCount);
 }
 
 TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][threaded]")
@@ -307,8 +308,8 @@ TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][thread
   loop.emit(CrossPing{ 0 });
 
   ev_loop::Spin strategy{ loop };
-  while (loop.get<CrossD_OwnThread_Starter>().last_value.load() < kPingPongLimit) {
-    (void)strategy.poll();
+  while (loop.get<CrossD_OwnThread_Starter>().last_value < kPingPongLimit) {
+    std::ignore = strategy.poll();
     std::this_thread::sleep_for(std::chrono::microseconds(kSpinDelayUs));
   }
 
@@ -318,7 +319,58 @@ TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][thread
   loop.stop();
 
   REQUIRE(loop.get<CrossA_SameThread_Relay>().received_count == kPingPongExpectedCount);
-  REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count.load() == kPingPongExpectedCount);
+  REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count == kPingPongExpectedCount);
+}
+
+TEST_CASE("EventLoop cross thread with Wait strategy", "[event_loop][threaded][strategy]")
+{
+  ev_loop::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
+  loop.start();
+
+  loop.emit(CrossPing{ 0 });
+
+  // Run Wait strategy in a separate thread so we can stop the loop
+  std::thread wait_thread([&loop] {
+    ev_loop::Wait strategy{ loop };
+    strategy.run();
+  });
+
+  // Wait for expected count instead of threshold + sleep
+  while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) {
+    std::this_thread::yield();
+  }
+
+  loop.stop();
+  wait_thread.join();
+
+  REQUIRE(loop.get<CrossA_SameThread_Relay>().received_count == kPingPongExpectedCount);
+  REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count == kPingPongExpectedCount);
+}
+
+TEST_CASE("EventLoop cross thread with Hybrid strategy", "[event_loop][threaded][strategy]")
+{
+  ev_loop::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
+  loop.start();
+
+  loop.emit(CrossPing{ 0 });
+
+  // Run Hybrid strategy in a separate thread so we can stop the loop
+  // (Hybrid can block in wait_pop_any after spin count is exceeded)
+  std::thread hybrid_thread([&loop] {
+    ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
+    strategy.run();
+  });
+
+  // Wait for expected count
+  while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) {
+    std::this_thread::yield();
+  }
+
+  loop.stop();
+  hybrid_thread.join();
+
+  REQUIRE(loop.get<CrossA_SameThread_Relay>().received_count == kPingPongExpectedCount);
+  REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count == kPingPongExpectedCount);
 }
 
 // =============================================================================

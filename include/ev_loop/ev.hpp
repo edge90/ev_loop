@@ -1052,6 +1052,48 @@ template<typename EventLoop> struct Yield
   }
 };
 
+// Hybrid strategy: spins for a number of iterations, then falls back to wait
+template<typename EventLoop> struct Hybrid
+{
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
+  EventLoop &event_loop;
+  std::size_t spin_count;
+  std::size_t empty_spins{ 0 };
+
+  explicit Hybrid(EventLoop &loop, std::size_t spins = 1000) : event_loop(loop), spin_count(spins) {}
+
+  [[nodiscard]] bool poll()
+  {
+    // Try to get an event without blocking
+    auto *event = event_loop.try_get_event();
+    if (event != nullptr) {
+      event_loop.dispatch_event(*event);
+      empty_spins = 0;// Reset counter on successful dispatch
+      return true;
+    }
+
+    // No event available - count empty spins
+    ++empty_spins;
+    if (empty_spins < spin_count) { return false; }
+
+    // Exceeded spin count - fall back to wait
+    empty_spins = 0;
+    event = event_loop.queue().wait_pop_any();
+    if (event == nullptr) { return false; }
+    event_loop.dispatch_event(*event);
+    return true;
+  }
+
+  void run() { run_while(std::true_type{}); }
+
+  // pred is only invoked, not forwarded - no std::forward needed
+  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
+  template<typename Predicate> void run_while(Predicate &&pred)
+  {
+    while (event_loop.is_running() && pred()) { std::ignore = poll(); }
+  }
+};
+
 // =============================================================================
 // Event Loop - the core dispatcher
 // =============================================================================
