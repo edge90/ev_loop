@@ -22,10 +22,10 @@ struct HeapEvent
 
   HeapEvent() = default;
   explicit HeapEvent(int val) : ptr(std::make_unique<int>(val)) {}
-  HeapEvent(const HeapEvent &) = delete;
-  HeapEvent &operator=(const HeapEvent &) = delete;
-  HeapEvent(HeapEvent &&) = default;
-  HeapEvent &operator=(HeapEvent &&) = default;
+  HeapEvent(const HeapEvent&) = delete;
+  HeapEvent& operator=(const HeapEvent&) = delete;
+  HeapEvent(HeapEvent&&) = default;
+  HeapEvent& operator=(HeapEvent&&) = default;
   ~HeapEvent() = default;
 
   [[nodiscard]] int value() const { return ptr ? *ptr : -1; }
@@ -233,11 +233,11 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     // Non-const lvalue -> T&
     Tagged tagged_event;
     tagged_event.store(std::string{ "test" });
-    static_assert(std::is_same_v<decltype(tagged_event.get<0>()), std::string &>);
+    static_assert(std::is_same_v<decltype(tagged_event.get<0>()), std::string&>);
 
     // Const lvalue -> const T&
-    const Tagged &const_ref = tagged_event;
-    static_assert(std::is_same_v<decltype(const_ref.get<0>()), const std::string &>);
+    const Tagged& const_ref = tagged_event;
+    static_assert(std::is_same_v<decltype(const_ref.get<0>()), const std::string&>);
 
     // Verify no copies when accessing via reference
     reset_tracking();
@@ -247,7 +247,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       const int constructs_before = constructed_count;
 
       // Getting reference should not copy or move
-      TrackedString &ref = tracked.get<0>();
+      TrackedString& ref = tracked.get<0>();
       REQUIRE(ref.value == "reftest");
       REQUIRE(constructed_count == constructs_before);
       REQUIRE(copy_count == 0);

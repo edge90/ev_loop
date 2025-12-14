@@ -43,9 +43,9 @@ struct C_OwnThread
   // cppcheck-suppress unusedStructMember
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
-  std::atomic<int> *counter = nullptr;
+  std::atomic<int>* counter = nullptr;
 
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
   {
     if (counter) { counter->fetch_add(1, std::memory_order_relaxed); }
     dispatcher.emit(Ping{ event.value + 1 });
@@ -59,9 +59,9 @@ struct D_OwnThread
   // cppcheck-suppress unusedStructMember
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
-  std::atomic<int> *counter = nullptr;
+  std::atomic<int>* counter = nullptr;
 
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
   {
     if (counter) { counter->fetch_add(1, std::memory_order_relaxed); }
     dispatcher.emit(Pong{ event.value + 1 });
@@ -82,7 +82,7 @@ struct A_SameThread
   int counter = 0;
   int last_value = 0;
 
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
   {
     ++counter;
     last_value = event.value;
@@ -99,7 +99,7 @@ struct D_OwnThread_ForMixed
 
   std::atomic<int> counter{ 0 };
 
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
   {
     counter.fetch_add(1, std::memory_order_relaxed);
     dispatcher.emit(Pong{ event.value + 1 });
@@ -119,7 +119,7 @@ struct A_SameThread_Relay
 
   int counter = 0;
 
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
   {
     ++counter;
     dispatcher.emit(Ping{ event.value + 1 });
@@ -136,7 +136,7 @@ struct D_OwnThread_Starter
   std::atomic<int> counter{ 0 };
   std::atomic<int> last_value{ 0 };
 
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher &dispatcher)
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
   {
     counter.fetch_add(1, std::memory_order_relaxed);
     last_value.store(event.value, std::memory_order_relaxed);

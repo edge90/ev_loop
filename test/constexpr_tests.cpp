@@ -60,34 +60,34 @@ TEST_CASE("tag_type_t selects smallest sufficient type", "[constexpr]")
 
 TEST_CASE("TaggedEvent::index is noexcept", "[constexpr]")
 {
-  STATIC_REQUIRE(noexcept(std::declval<ev_loop::TaggedEvent<int> &>().index()));
-  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::TaggedEvent<int> &>().index()));
+  STATIC_REQUIRE(noexcept(std::declval<ev_loop::TaggedEvent<int>&>().index()));
+  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::TaggedEvent<int>&>().index()));
 }
 
 TEST_CASE("RingBuffer::empty and size are noexcept", "[constexpr]")
 {
-  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::RingBuffer<int> &>().empty()));
-  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::RingBuffer<int> &>().size()));
+  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::RingBuffer<int>&>().empty()));
+  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::RingBuffer<int>&>().size()));
 }
 
 TEST_CASE("SPSCQueue::is_stopped is noexcept", "[constexpr]")
 {
-  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::SPSCQueue<int> &>().is_stopped()));
+  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::SPSCQueue<int>&>().is_stopped()));
 }
 
 TEST_CASE("ThreadSafeRingBuffer::is_stopped is noexcept", "[constexpr]")
 {
-  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::ThreadSafeRingBuffer<int> &>().is_stopped()));
+  STATIC_REQUIRE(noexcept(std::declval<const ev_loop::ThreadSafeRingBuffer<int>&>().is_stopped()));
 }
 
 // Verify ref qualifiers: & qualified functions are callable on lvalues
 TEST_CASE("Ref qualified functions are callable on lvalues", "[constexpr]")
 {
   // RingBuffer (no ref qualifiers on empty/size - they're const)
-  STATIC_REQUIRE(requires(ev_loop::RingBuffer<int> &buf) { buf.empty(); });
-  STATIC_REQUIRE(requires(ev_loop::RingBuffer<int> &buf) { buf.size(); });
+  STATIC_REQUIRE(requires(ev_loop::RingBuffer<int>& buf) { buf.empty(); });
+  STATIC_REQUIRE(requires(ev_loop::RingBuffer<int>& buf) { buf.size(); });
 
   // TaggedEvent::index (const, no ref qualifier needed)
-  STATIC_REQUIRE(requires(ev_loop::TaggedEvent<int> &tagged) { tagged.index(); });
-  STATIC_REQUIRE(requires(const ev_loop::TaggedEvent<int> &tagged) { tagged.index(); });
+  STATIC_REQUIRE(requires(ev_loop::TaggedEvent<int>& tagged) { tagged.index(); });
+  STATIC_REQUIRE(requires(const ev_loop::TaggedEvent<int>& tagged) { tagged.index(); });
 }

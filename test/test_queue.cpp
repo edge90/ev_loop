@@ -105,7 +105,7 @@ TEST_CASE("SPSCQueue with TaggedEvent", "[spsc_queue]")
     tagged_event.store(TrackedString{ "queued" });
     spsc_queue.push(std::move(tagged_event));
 
-    auto *result = spsc_queue.try_pop();
+    auto* result = spsc_queue.try_pop();
     REQUIRE(result != nullptr);
     REQUIRE(result->get<0>().value == "queued");
   }

@@ -121,13 +121,13 @@ public:
   ~TaggedEvent() { destroy(); }
 
   // cppcheck-suppress missingMemberCopy ; storage is initialized via placement new in copy_construct_from
-  TaggedEvent(const TaggedEvent &other) : tag(other.tag)
+  TaggedEvent(const TaggedEvent& other) : tag(other.tag)
   {
     if (tag != uninitialized_tag) { copy_construct_from(other); }
   }
 
   // cppcheck-suppress missingMemberCopy ; storage is initialized via placement new in move_construct_from
-  TaggedEvent(TaggedEvent &&other) noexcept : tag(other.tag)
+  TaggedEvent(TaggedEvent&& other) noexcept : tag(other.tag)
   {
     if (tag != uninitialized_tag) {
       move_construct_from(std::move(other));
@@ -137,7 +137,7 @@ public:
   }
 
   // cppcheck-suppress operatorEqVarError ; storage is initialized via placement new in copy_construct_from
-  TaggedEvent &operator=(const TaggedEvent &other)
+  TaggedEvent& operator=(const TaggedEvent& other)
   {
     if (this != &other) {
       destroy();
@@ -148,7 +148,7 @@ public:
   }
 
   // cppcheck-suppress operatorEqVarError ; storage is initialized via placement new in move_construct_from
-  TaggedEvent &operator=(TaggedEvent &&other) noexcept
+  TaggedEvent& operator=(TaggedEvent&& other) noexcept
   {
     if (this != &other) {
       destroy();
@@ -164,12 +164,12 @@ public:
 
   template<typename E>
     requires(contains_v<type_list<Events...>, std::decay_t<E>>)
-  explicit TaggedEvent(E &&event)
+  explicit TaggedEvent(E&& event)
   {
     store(std::forward<E>(event));
   }
 
-  template<typename E> void store(E &&event)
+  template<typename E> void store(E&& event)
   {
     destroy();
     using Decayed = std::decay_t<E>;
@@ -178,12 +178,12 @@ public:
   }
 
   // cppcheck-suppress functionStatic ; explicit object parameter functions cannot be static
-  template<std::size_t I, typename Self> auto &get(this Self &self)
+  template<std::size_t I, typename Self> auto& get(this Self& self)
   {
     using Base = type_at_t<I, Events...>;
     using T = std::conditional_t<std::is_const_v<Self>, const Base, Base>;
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    return *reinterpret_cast<T *>(self.storage.data());
+    return *reinterpret_cast<T*>(self.storage.data());
   }
 
   [[nodiscard]] std::size_t index() const noexcept { return tag; }
@@ -207,43 +207,43 @@ private:
     using T = type_at_t<I, Events...>;
     if constexpr (!std::is_trivially_destructible_v<T>) {
       // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      reinterpret_cast<T *>(storage.data())->~T();
+      reinterpret_cast<T*>(storage.data())->~T();
     }
   }
 
-  void copy_construct_from(const TaggedEvent &other)
+  void copy_construct_from(const TaggedEvent& other)
   {
     copy_at_index(other, std::make_index_sequence<sizeof...(Events)>{});
   }
 
-  template<std::size_t... Is> void copy_at_index(const TaggedEvent &other, std::index_sequence<Is...> /*unused*/)
+  template<std::size_t... Is> void copy_at_index(const TaggedEvent& other, std::index_sequence<Is...> /*unused*/)
   {
     (void)((tag == Is ? (copy_type<Is>(other), true) : false) || ...);
   }
 
-  template<std::size_t I> void copy_type(const TaggedEvent &other)
+  template<std::size_t I> void copy_type(const TaggedEvent& other)
   {
     using T = type_at_t<I, Events...>;
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    new (storage.data()) T(*reinterpret_cast<const T *>(other.storage.data()));
+    new (storage.data()) T(*reinterpret_cast<const T*>(other.storage.data()));
   }
 
-  void move_construct_from(TaggedEvent &&other)
+  void move_construct_from(TaggedEvent&& other)
   {
     move_at_index(std::move(other), std::make_index_sequence<sizeof...(Events)>{});
   }
 
-  template<std::size_t... Is> void move_at_index(TaggedEvent &&other, std::index_sequence<Is...> /*unused*/)
+  template<std::size_t... Is> void move_at_index(TaggedEvent&& other, std::index_sequence<Is...> /*unused*/)
   {
     (void)((tag == Is ? (move_type<Is>(std::move(other)), true) : false) || ...);
   }
 
   // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved)
-  template<std::size_t I> void move_type(TaggedEvent &&other)
+  template<std::size_t I> void move_type(TaggedEvent&& other)
   {
     using T = type_at_t<I, Events...>;
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-    new (storage.data()) T(std::move(*reinterpret_cast<T *>(other.storage.data())));
+    new (storage.data()) T(std::move(*reinterpret_cast<T*>(other.storage.data())));
   }
 };
 
@@ -260,13 +260,13 @@ template<typename List> using to_tagged_event_t = typename to_tagged_event<List>
 // Fast tagged event dispatch
 template<typename Tagged, typename Func, std::size_t... Is>
 // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-constexpr void fast_dispatch_impl(Tagged &tagged, Func &&func, std::index_sequence<Is...> /*unused*/)
+constexpr void fast_dispatch_impl(Tagged& tagged, Func&& func, std::index_sequence<Is...> /*unused*/)
 {
   bool dispatched = ((tagged.index() == Is ? (func(tagged.template get<Is>()), true) : false) || ...);
   if (!dispatched) [[unlikely]] { std::unreachable(); }
 }
 
-template<typename... Events, typename Func> constexpr void fast_dispatch(TaggedEvent<Events...> &tagged, Func &&func)
+template<typename... Events, typename Func> constexpr void fast_dispatch(TaggedEvent<Events...>& tagged, Func&& func)
 {
   fast_dispatch_impl(tagged, std::forward<Func>(func), std::make_index_sequence<sizeof...(Events)>{});
 }
@@ -282,14 +282,14 @@ template<typename T, std::size_t Capacity = 4096> class RingBuffer
   static constexpr std::size_t mask_ = Capacity - 1;
 
 public:
-  bool push(T &&event)
+  bool push(T&& event)
   {
     if (size() >= Capacity) [[unlikely]] { return false; }
     buffer_[tail_++ & mask_] = std::move(event);
     return true;
   }
 
-  bool push(const T &event)
+  bool push(const T& event)
   {
     if (size() >= Capacity) [[unlikely]] { return false; }
     buffer_[tail_++ & mask_] = event;
@@ -297,14 +297,14 @@ public:
   }
 
   // Get slot for in-place construction, then call commit_push()
-  [[nodiscard]] T *alloc_slot()
+  [[nodiscard]] T* alloc_slot()
   {
     if (size() >= Capacity) [[unlikely]] { return nullptr; }
     return &buffer_[tail_ & mask_];
   }
   void commit_push() { ++tail_; }
 
-  [[nodiscard]] T *try_pop()
+  [[nodiscard]] T* try_pop()
   {
     if (head_ == tail_) [[unlikely]] { return nullptr; }
     return &buffer_[head_++ & mask_];
@@ -407,7 +407,7 @@ public:
     return true;
   }
 
-  [[nodiscard]] T *try_pop()
+  [[nodiscard]] T* try_pop()
   {
     std::size_t head = head_.load(std::memory_order_relaxed);
     if (head == tail_.load(std::memory_order_acquire)) { return nullptr; }
@@ -416,7 +416,7 @@ public:
     return &current_;
   }
 
-  [[nodiscard]] T *pop_spin()
+  [[nodiscard]] T* pop_spin()
   {
     std::size_t head = head_.load(std::memory_order_relaxed);
     std::size_t tail = tail_.load(std::memory_order_acquire);
@@ -468,7 +468,7 @@ public:
     return true;
   }
 
-  [[nodiscard]] T *try_pop()
+  [[nodiscard]] T* try_pop()
   {
     if (!has_data_.load(std::memory_order_acquire)) { return nullptr; }
     std::scoped_lock lock(mutex_);
@@ -481,7 +481,7 @@ public:
     return &current_;
   }
 
-  [[nodiscard]] T *pop_wait_for(std::chrono::milliseconds timeout)
+  [[nodiscard]] T* pop_wait_for(std::chrono::milliseconds timeout)
   {
     if (has_data_.load(std::memory_order_acquire)) {
       std::scoped_lock lock(mutex_);
@@ -499,7 +499,7 @@ public:
     return &current_;
   }
 
-  [[nodiscard]] T *pop_spin()
+  [[nodiscard]] T* pop_spin()
   {
     while (!has_data_.load(std::memory_order_acquire)) {
       if (stop_.load(std::memory_order_acquire)) { return nullptr; }
@@ -544,9 +544,9 @@ public:
   // Called from same thread (no sync needed)
   void push_local(TaggedEventType event) { local_queue_.push(std::move(event)); }
 
-  template<typename E> void push_local_event(E &&event)
+  template<typename E> void push_local_event(E&& event)
   {
-    auto *slot = local_queue_.alloc_slot();
+    auto* slot = local_queue_.alloc_slot();
     if (slot) [[likely]] {
       slot->store(std::forward<E>(event));
       local_queue_.commit_push();
@@ -565,7 +565,7 @@ public:
     if (waiting_.load(std::memory_order_acquire)) { cv_.notify_one(); }
   }
 
-  template<typename E> void push_remote_event(E &&event)
+  template<typename E> void push_remote_event(E&& event)
   {
     TaggedEventType tagged;
     tagged.store(std::forward<E>(event));
@@ -579,17 +579,17 @@ public:
   }
 
   // Called from same thread only - checks local first, then drains remote
-  [[nodiscard]] TaggedEventType *try_pop()
+  [[nodiscard]] TaggedEventType* try_pop()
   {
     // Fast path: check local queue first (no atomic/lock)
-    if (auto *event = local_queue_.try_pop()) { return event; }
+    if (auto* event = local_queue_.try_pop()) { return event; }
     // Local empty - bulk drain remote queue
     drain_remote();
     return local_queue_.try_pop();
   }
 
   // Pop from local queue only (no remote check) - for batch processing
-  [[nodiscard]] TaggedEventType *try_pop_local() { return local_queue_.try_pop(); }
+  [[nodiscard]] TaggedEventType* try_pop_local() { return local_queue_.try_pop(); }
 
   // Drain remote queue if there are pending events
   void drain_remote_if_pending() { drain_remote(); }
@@ -597,10 +597,10 @@ public:
   // Block until an event is available or timeout expires
   // Returns nullptr on timeout, pointer to event otherwise
   template<typename Rep, typename Period>
-  [[nodiscard]] TaggedEventType *wait_pop(std::chrono::duration<Rep, Period> timeout)
+  [[nodiscard]] TaggedEventType* wait_pop(std::chrono::duration<Rep, Period> timeout)
   {
     // First check local queue (fast path)
-    if (auto *event = local_queue_.try_pop()) { return event; }
+    if (auto* event = local_queue_.try_pop()) { return event; }
 
     // Wait for remote events
     {
@@ -625,10 +625,10 @@ public:
   // 1. Check local queue (no sync)
   // 2. If empty, drain remote (one lock)
   // 3. If still empty, wait on CV
-  [[nodiscard]] TaggedEventType *wait_pop_any()
+  [[nodiscard]] TaggedEventType* wait_pop_any()
   {
     // Fast path: check local queue first
-    if (auto *event = local_queue_.try_pop()) { return event; }
+    if (auto* event = local_queue_.try_pop()) { return event; }
 
     // Try draining remote without waiting
     if (has_remote_.load(std::memory_order_acquire)) {
@@ -641,7 +641,7 @@ public:
     }
 
     // Check local again after drain
-    if (auto *event = local_queue_.try_pop()) { return event; }
+    if (auto* event = local_queue_.try_pop()) { return event; }
 
     // Both empty - wait on CV for remote events
     {
@@ -723,27 +723,27 @@ public:
   using dispatcher_type = SameThreadDispatcher<EventLoopType>;
 
   template<typename... Args>
-  explicit SameThreadWrapper(EventLoopType *event_loop, Args &&...args)
+  explicit SameThreadWrapper(EventLoopType* event_loop, Args&&... args)
     : receiver_(std::forward<Args>(args)...), dispatcher_(event_loop)
   {}
 
   ~SameThreadWrapper() = default;
 
-  SameThreadWrapper(const SameThreadWrapper &) = delete;
-  SameThreadWrapper &operator=(const SameThreadWrapper &) = delete;
-  SameThreadWrapper(SameThreadWrapper &&) noexcept = default;
-  SameThreadWrapper &operator=(SameThreadWrapper &&) noexcept = default;
+  SameThreadWrapper(const SameThreadWrapper&) = delete;
+  SameThreadWrapper& operator=(const SameThreadWrapper&) = delete;
+  SameThreadWrapper(SameThreadWrapper&&) noexcept = default;
+  SameThreadWrapper& operator=(SameThreadWrapper&&) noexcept = default;
 
   // Called by EventLoop to dispatch a queued event
   template<typename Event>
     requires can_receive<Receiver, std::decay_t<Event>>
-  void dispatch(Event &&event)
+  void dispatch(Event&& event)
   {
     receiver_.on_event(std::forward<Event>(event), dispatcher_);
   }
 
-  [[nodiscard]] Receiver &get() & noexcept { return receiver_; }
-  [[nodiscard]] const Receiver &get() const & noexcept { return receiver_; }
+  [[nodiscard]] Receiver& get() & noexcept { return receiver_; }
+  [[nodiscard]] const Receiver& get() const& noexcept { return receiver_; }
 
   // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
   void start() noexcept {}
@@ -776,16 +776,16 @@ public:
   using dispatcher_type = OwnThreadDispatcher<Receiver, EventLoopType>;
 
   template<typename... Args>
-  explicit OwnThreadWrapper(EventLoopType *event_loop, Args &&...args)
+  explicit OwnThreadWrapper(EventLoopType* event_loop, Args&&... args)
     : receiver_(std::forward<Args>(args)...), ev_(event_loop)
   {}
 
   ~OwnThreadWrapper() { stop(); }
 
-  OwnThreadWrapper(const OwnThreadWrapper &) = delete;
-  OwnThreadWrapper &operator=(const OwnThreadWrapper &) = delete;
-  OwnThreadWrapper(OwnThreadWrapper &&) = delete;
-  OwnThreadWrapper &operator=(OwnThreadWrapper &&) = delete;
+  OwnThreadWrapper(const OwnThreadWrapper&) = delete;
+  OwnThreadWrapper& operator=(const OwnThreadWrapper&) = delete;
+  OwnThreadWrapper(OwnThreadWrapper&&) = delete;
+  OwnThreadWrapper& operator=(OwnThreadWrapper&&) = delete;
 
   void start()
   {
@@ -803,7 +803,7 @@ public:
   // Push from any thread (synchronized)
   template<typename Event>
     requires can_receive<Receiver, Event>
-  void push(Event &&event)
+  void push(Event&& event)
   {
     tagged_event tagged;
     tagged.store(std::forward<Event>(event));
@@ -811,8 +811,8 @@ public:
     queue_.notify();// Wake up consumer
   }
 
-  [[nodiscard]] Receiver &get() & noexcept { return receiver_; }
-  [[nodiscard]] const Receiver &get() const & noexcept { return receiver_; }
+  [[nodiscard]] Receiver& get() & noexcept { return receiver_; }
+  [[nodiscard]] const Receiver& get() const& noexcept { return receiver_; }
 
   static constexpr ThreadMode mode = ThreadMode::OwnThread;
 
@@ -821,15 +821,15 @@ private:
   {
     dispatcher_type dispatcher(ev_);
     while (running_.load(std::memory_order_relaxed)) {
-      auto *result = queue_.pop_spin();
+      auto* result = queue_.pop_spin();
       if (result) {
-        fast_dispatch(*result, [this, &dispatcher](auto &event) { receiver_.on_event(std::move(event), dispatcher); });
+        fast_dispatch(*result, [this, &dispatcher](auto& event) { receiver_.on_event(std::move(event), dispatcher); });
       }
     }
   }
 
   Receiver receiver_;
-  EventLoopType *ev_;
+  EventLoopType* ev_;
   std::thread thread_;
   std::atomic<bool> running_{ false };
   queue_type queue_;
@@ -867,21 +867,21 @@ public:
   using wrapper_type = wrapper_for<Receiver, EventLoopType>;
 
   template<typename... Args>
-  explicit ReceiverStorage(EventLoopType *loop, Args &&...args)
+  explicit ReceiverStorage(EventLoopType* loop, Args&&... args)
     : wrapper_(std::make_unique<wrapper_type>(loop, std::forward<Args>(args)...))
   {}
 
   ~ReceiverStorage() = default;
 
-  ReceiverStorage(const ReceiverStorage &) = delete;
-  ReceiverStorage &operator=(const ReceiverStorage &) = delete;
-  ReceiverStorage(ReceiverStorage &&) noexcept = default;
-  ReceiverStorage &operator=(ReceiverStorage &&) noexcept = default;
+  ReceiverStorage(const ReceiverStorage&) = delete;
+  ReceiverStorage& operator=(const ReceiverStorage&) = delete;
+  ReceiverStorage(ReceiverStorage&&) noexcept = default;
+  ReceiverStorage& operator=(ReceiverStorage&&) noexcept = default;
 
-  wrapper_type &operator*() & noexcept { return *wrapper_; }
-  const wrapper_type &operator*() const & noexcept { return *wrapper_; }
-  wrapper_type *operator->() & noexcept { return wrapper_.get(); }
-  const wrapper_type *operator->() const & noexcept { return wrapper_.get(); }
+  wrapper_type& operator*() & noexcept { return *wrapper_; }
+  const wrapper_type& operator*() const& noexcept { return *wrapper_; }
+  wrapper_type* operator->() & noexcept { return wrapper_.get(); }
+  const wrapper_type* operator->() const& noexcept { return wrapper_.get(); }
 
 private:
   std::unique_ptr<wrapper_type> wrapper_;
@@ -972,12 +972,12 @@ inline constexpr bool has_remote_producers_v = has_remote_producers<SameThreadEv
 template<typename EventLoop> struct Spin
 {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-  EventLoop &event_loop;
-  explicit Spin(EventLoop &loop) : event_loop(loop) {}
+  EventLoop& event_loop;
+  explicit Spin(EventLoop& loop) : event_loop(loop) {}
 
   [[nodiscard]] bool poll()
   {
-    auto *event = event_loop.try_get_event();
+    auto* event = event_loop.try_get_event();
     if (event == nullptr) { return false; }
     event_loop.dispatch_event(*event);
     return true;
@@ -989,7 +989,7 @@ template<typename EventLoop> struct Spin
   }
 
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  template<typename Predicate> void run_while(Predicate &&pred)
+  template<typename Predicate> void run_while(Predicate&& pred)
   {
     while (event_loop.is_running() && pred()) { (void)poll(); }
   }
@@ -999,12 +999,12 @@ template<typename EventLoop> struct Spin
 template<typename EventLoop> struct Wait
 {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-  EventLoop &event_loop;
-  explicit Wait(EventLoop &loop) : event_loop(loop) {}
+  EventLoop& event_loop;
+  explicit Wait(EventLoop& loop) : event_loop(loop) {}
 
   [[nodiscard]] bool poll()
   {
-    auto *event = event_loop.queue().wait_pop_any();
+    auto* event = event_loop.queue().wait_pop_any();
     if (event == nullptr) { return false; }
     event_loop.dispatch_event(*event);
     return true;
@@ -1016,7 +1016,7 @@ template<typename EventLoop> struct Wait
   }
 
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  template<typename Predicate> void run_while(Predicate &&pred)
+  template<typename Predicate> void run_while(Predicate&& pred)
   {
     while (event_loop.is_running() && pred()) { (void)poll(); }
   }
@@ -1026,12 +1026,12 @@ template<typename EventLoop> struct Wait
 template<typename EventLoop> struct Yield
 {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-  EventLoop &event_loop;
-  explicit Yield(EventLoop &loop) : event_loop(loop) {}
+  EventLoop& event_loop;
+  explicit Yield(EventLoop& loop) : event_loop(loop) {}
 
   [[nodiscard]] bool poll()
   {
-    auto *event = event_loop.try_get_event();
+    auto* event = event_loop.try_get_event();
     if (event == nullptr) {
       std::this_thread::yield();
       return false;
@@ -1046,7 +1046,7 @@ template<typename EventLoop> struct Yield
   }
 
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  template<typename Predicate> void run_while(Predicate &&pred)
+  template<typename Predicate> void run_while(Predicate&& pred)
   {
     while (event_loop.is_running() && pred()) { (void)poll(); }
   }
@@ -1056,16 +1056,16 @@ template<typename EventLoop> struct Yield
 template<typename EventLoop> struct Hybrid
 {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-  EventLoop &event_loop;
+  EventLoop& event_loop;
   std::size_t spin_count;
   std::size_t empty_spins{ 0 };
 
-  explicit Hybrid(EventLoop &loop, std::size_t spins = 1000) : event_loop(loop), spin_count(spins) {}
+  explicit Hybrid(EventLoop& loop, std::size_t spins = 1000) : event_loop(loop), spin_count(spins) {}
 
   [[nodiscard]] bool poll()
   {
     // Try to get an event without blocking
-    auto *event = event_loop.try_get_event();
+    auto* event = event_loop.try_get_event();
     if (event != nullptr) {
       event_loop.dispatch_event(*event);
       empty_spins = 0;// Reset counter on successful dispatch
@@ -1088,7 +1088,7 @@ template<typename EventLoop> struct Hybrid
 
   // pred is only invoked, not forwarded - no std::forward needed
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  template<typename Predicate> void run_while(Predicate &&pred)
+  template<typename Predicate> void run_while(Predicate&& pred)
   {
     while (event_loop.is_running() && pred()) { std::ignore = poll(); }
   }
@@ -1113,10 +1113,10 @@ public:
 
   ~EventLoop() { stop(); }
 
-  EventLoop(const EventLoop &) = delete;
-  EventLoop &operator=(const EventLoop &) = delete;
-  EventLoop(EventLoop &&) = delete;
-  EventLoop &operator=(EventLoop &&) = delete;
+  EventLoop(const EventLoop&) = delete;
+  EventLoop& operator=(const EventLoop&) = delete;
+  EventLoop(EventLoop&&) = delete;
+  EventLoop& operator=(EventLoop&&) = delete;
 
   void start()
   {
@@ -1127,9 +1127,9 @@ public:
   // Strategy accessors - use with Strategy{loop}.run()
   [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
 
-  [[nodiscard]] queue_type &queue() & noexcept { return queue_; }
+  [[nodiscard]] queue_type& queue() & noexcept { return queue_; }
 
-  [[nodiscard]] tagged_event *try_get_event()
+  [[nodiscard]] tagged_event* try_get_event()
   {
     if constexpr (has_remote_producers) {
       return queue_.try_pop();
@@ -1138,9 +1138,9 @@ public:
     }
   }
 
-  void dispatch_event(tagged_event &event)
+  void dispatch_event(tagged_event& event)
   {
-    fast_dispatch(event, [this]<typename E>(E &event2) { this->template fanout_to_same_thread<0>(event2); });
+    fast_dispatch(event, [this]<typename E>(E& event2) { this->template fanout_to_same_thread<0>(event2); });
   }
 
   void stop()
@@ -1151,9 +1151,9 @@ public:
   }
 
   // Emit from EV thread (uses local queue)
-  template<typename Event> void emit(Event &&event) { queue_event<false>(std::forward<Event>(event)); }
+  template<typename Event> void emit(Event&& event) { queue_event<false>(std::forward<Event>(event)); }
 
-  template<typename Receiver, typename Self> [[nodiscard]] auto &get(this Self &self)
+  template<typename Receiver, typename Self> [[nodiscard]] auto& get(this Self& self)
   {
     return std::get<ReceiverStorage<Receiver, self_type>>(self.receivers_)->get();
   }
@@ -1167,12 +1167,12 @@ private:
   friend class ExternalEmitter<self_type>;
 
   // Called by SameThreadDispatcher (uses local queue)
-  template<typename Event> void queue_local(Event &&event) { queue_event<false>(std::forward<Event>(event)); }
+  template<typename Event> void queue_local(Event&& event) { queue_event<false>(std::forward<Event>(event)); }
 
   // Called by OwnThreadDispatcher and ExternalEmitter (uses remote queue with synchronization)
-  template<typename Event> void queue_remote(Event &&event) { queue_event<true>(std::forward<Event>(event)); }
+  template<typename Event> void queue_remote(Event&& event) { queue_event<true>(std::forward<Event>(event)); }
 
-  template<bool Remote, typename Event> void queue_event(Event &&event)
+  template<bool Remote, typename Event> void queue_event(Event&& event)
   {
     constexpr bool has_same_thread = contains_v<same_thread_events, std::decay_t<Event>>;
     constexpr std::size_t own_thread_count = count_own_thread_receivers<0, std::decay_t<Event>>();
@@ -1231,7 +1231,7 @@ private:
 
   // Fan out event to all same-thread receivers that handle it
   // Remaining = how many more receivers after this one will handle it
-  template<std::size_t I, std::size_t Remaining, typename Event> void fanout_to_same_thread_impl(Event &event)
+  template<std::size_t I, std::size_t Remaining, typename Event> void fanout_to_same_thread_impl(Event& event)
   {
     if constexpr (I < sizeof...(Receivers)) {
       using Receiver = std::tuple_element_t<I, std::tuple<Receivers...>>;
@@ -1249,7 +1249,7 @@ private:
     }
   }
 
-  template<std::size_t I, typename Event> void fanout_to_same_thread(Event &event)
+  template<std::size_t I, typename Event> void fanout_to_same_thread(Event& event)
   {
     constexpr std::size_t count = count_same_thread_receivers<I, std::decay_t<Event>>();
     if constexpr (count == 1) {
@@ -1261,7 +1261,7 @@ private:
   }
 
   // Direct dispatch to the single same-thread receiver for this event type
-  template<std::size_t I, typename Event> void dispatch_to_single_receiver(Event &&event)
+  template<std::size_t I, typename Event> void dispatch_to_single_receiver(Event&& event)
   {
     if constexpr (I < sizeof...(Receivers)) {
       using Receiver = std::tuple_element_t<I, std::tuple<Receivers...>>;
@@ -1276,7 +1276,7 @@ private:
 
   // Push to own-thread receivers
   // Remaining = how many more receivers after this one will handle it
-  template<std::size_t I, std::size_t Remaining, typename Event> void push_to_own_thread_impl(Event &&event)
+  template<std::size_t I, std::size_t Remaining, typename Event> void push_to_own_thread_impl(Event&& event)
   {
     if constexpr (I < sizeof...(Receivers)) {
       using Receiver = std::tuple_element_t<I, std::tuple<Receivers...>>;
@@ -1294,7 +1294,7 @@ private:
     }
   }
 
-  template<std::size_t I, typename Event> void push_to_own_thread(Event &&event)
+  template<std::size_t I, typename Event> void push_to_own_thread(Event&& event)
   {
     constexpr std::size_t count = count_own_thread_receivers<I, std::decay_t<Event>>();
     if constexpr (count > 0) { push_to_own_thread_impl<I, count>(std::forward<Event>(event)); }
@@ -1313,24 +1313,24 @@ private:
 template<typename EventLoopType> class SameThreadDispatcher
 {
 public:
-  explicit SameThreadDispatcher(EventLoopType *loop) : event_loop_(loop) {}
+  explicit SameThreadDispatcher(EventLoopType* loop) : event_loop_(loop) {}
 
-  template<typename Event> void emit(Event &&event) { event_loop_->queue_local(std::forward<Event>(event)); }
+  template<typename Event> void emit(Event&& event) { event_loop_->queue_local(std::forward<Event>(event)); }
 
 private:
-  EventLoopType *event_loop_;
+  EventLoopType* event_loop_;
 };
 
 // Dispatcher for own-thread receivers: uses remote queue (synchronized)
 template<typename Emitter, typename EventLoopType> class OwnThreadDispatcher
 {
 public:
-  explicit OwnThreadDispatcher(EventLoopType *loop) : event_loop_(loop) {}
+  explicit OwnThreadDispatcher(EventLoopType* loop) : event_loop_(loop) {}
 
-  template<typename Event> void emit(Event &&event) { event_loop_->queue_remote(std::forward<Event>(event)); }
+  template<typename Event> void emit(Event&& event) { event_loop_->queue_remote(std::forward<Event>(event)); }
 
 private:
-  EventLoopType *event_loop_;
+  EventLoopType* event_loop_;
 };
 
 // =============================================================================
@@ -1340,12 +1340,12 @@ private:
 template<typename EventLoopType> class ExternalEmitter
 {
 public:
-  explicit ExternalEmitter(EventLoopType *loop) noexcept : event_loop_(loop) {}
+  explicit ExternalEmitter(EventLoopType* loop) noexcept : event_loop_(loop) {}
 
-  template<typename Event> void emit(Event &&event) { event_loop_->queue_remote(std::forward<Event>(event)); }
+  template<typename Event> void emit(Event&& event) { event_loop_->queue_remote(std::forward<Event>(event)); }
 
 private:
-  EventLoopType *event_loop_;
+  EventLoopType* event_loop_;
 };
 
 // =============================================================================
@@ -1376,7 +1376,7 @@ template<typename... Receivers> struct Builder
 
 // Check if receiver has on_event method for a given event type
 template<typename Receiver, typename Event, typename Dispatcher>
-concept has_on_event_for = requires(Receiver &receiver, Event event, Dispatcher &dispatcher) {
+concept has_on_event_for = requires(Receiver& receiver, Event event, Dispatcher& dispatcher) {
   receiver.on_event(std::move(event), dispatcher);
 };
 
