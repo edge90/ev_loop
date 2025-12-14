@@ -115,7 +115,7 @@ struct ThreadedStringReceiver
 // Own thread tests
 // =============================================================================
 
-TEST_CASE("EventLoop own thread ping pong", "[event_loop][threaded]")
+TEST_CASE("EventLoop own thread ping pong", "[event_loop][own_thread]")
 {
   ev_loop::EventLoop<ThreadedPingReceiver, ThreadedPongReceiver> loop;
   loop.start();
@@ -134,7 +134,7 @@ TEST_CASE("EventLoop own thread ping pong", "[event_loop][threaded]")
   REQUIRE(loop.get<ThreadedPongReceiver>().received_count == kPingPongExpectedCount);
 }
 
-TEST_CASE("EventLoop own thread string events", "[event_loop][threaded]")
+TEST_CASE("EventLoop own thread string events", "[event_loop][own_thread]")
 {
   ev_loop::EventLoop<ThreadedStringReceiver> loop;
   loop.start();
@@ -187,7 +187,7 @@ struct OwnThreadCounter
   }
 };
 
-TEST_CASE("EventLoop mixed threading", "[event_loop][threaded]")
+TEST_CASE("EventLoop mixed threading", "[event_loop][mixed_thread]")
 {
   ev_loop::EventLoop<SameThreadCounter, OwnThreadCounter> loop;
   loop.start();
@@ -278,7 +278,7 @@ struct CrossA_SameThread_Relay
   }
 };
 
-TEST_CASE("EventLoop cross thread samethread to ownthread", "[event_loop][threaded]")
+TEST_CASE("EventLoop cross thread samethread to ownthread", "[event_loop][cross_thread]")
 {
   ev_loop::EventLoop<CrossA_SameThread, CrossD_OwnThread> loop;
   loop.start();
@@ -300,7 +300,7 @@ TEST_CASE("EventLoop cross thread samethread to ownthread", "[event_loop][thread
   REQUIRE(loop.get<CrossD_OwnThread>().received_count == kPingPongExpectedCount);
 }
 
-TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][threaded]")
+TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][cross_thread]")
 {
   ev_loop::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
   loop.start();
@@ -322,7 +322,7 @@ TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][thread
   REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count == kPingPongExpectedCount);
 }
 
-TEST_CASE("EventLoop cross thread with Wait strategy", "[event_loop][threaded][strategy]")
+TEST_CASE("EventLoop cross thread with Wait strategy", "[event_loop][wait]")
 {
   ev_loop::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
   loop.start();
@@ -347,7 +347,7 @@ TEST_CASE("EventLoop cross thread with Wait strategy", "[event_loop][threaded][s
   REQUIRE(loop.get<CrossD_OwnThread_Starter>().received_count == kPingPongExpectedCount);
 }
 
-TEST_CASE("EventLoop cross thread with Hybrid strategy", "[event_loop][threaded][strategy]")
+TEST_CASE("EventLoop cross thread with Hybrid strategy", "[event_loop][hybrid]")
 {
   ev_loop::EventLoop<CrossA_SameThread_Relay, CrossD_OwnThread_Starter> loop;
   loop.start();
@@ -398,7 +398,7 @@ struct ExternalThreadReceiver
   }
 };
 
-TEST_CASE("ExternalEmitter from another thread", "[external_emitter][threaded]")
+TEST_CASE("ExternalEmitter from another thread", "[event_loop][external_emitter]")
 {
   ev_loop::EventLoop<ExternalThreadReceiver> loop;
   loop.start();

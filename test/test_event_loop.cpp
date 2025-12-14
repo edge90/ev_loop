@@ -86,7 +86,7 @@ struct StringReceiver
 // Same thread tests
 // =============================================================================
 
-TEST_CASE("EventLoop ping pong with Spin strategy", "[event_loop][strategy]")
+TEST_CASE("EventLoop ping pong with Spin strategy", "[event_loop][spin]")
 {
   ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
   loop.start();
@@ -102,7 +102,7 @@ TEST_CASE("EventLoop ping pong with Spin strategy", "[event_loop][strategy]")
   loop.stop();
 }
 
-TEST_CASE("EventLoop ping pong with Yield strategy", "[event_loop][strategy]")
+TEST_CASE("EventLoop ping pong with Yield strategy", "[event_loop][yield]")
 {
   ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
   loop.start();
@@ -118,7 +118,7 @@ TEST_CASE("EventLoop ping pong with Yield strategy", "[event_loop][strategy]")
   loop.stop();
 }
 
-TEST_CASE("EventLoop ping pong with Hybrid strategy", "[event_loop][strategy]")
+TEST_CASE("EventLoop ping pong with Hybrid strategy", "[event_loop][hybrid]")
 {
   ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
   loop.start();
