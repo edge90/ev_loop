@@ -9,15 +9,14 @@
 
 namespace {
 
-template<typename Count, typename Duration>
-auto events_per_second(Count event_count, Duration elapsed) -> long long
+template<typename Count, typename Duration> auto events_per_second(Count event_count, Duration elapsed) -> long long
 {
   using seconds_double = std::chrono::duration<double>;
   auto seconds = std::chrono::duration_cast<seconds_double>(elapsed).count();
   return static_cast<long long>(static_cast<double>(event_count) / seconds);
 }
 
-}  // namespace
+}// namespace
 
 // =============================================================================
 // Define event types
@@ -44,9 +43,9 @@ struct C_OwnThread
   // cppcheck-suppress unusedStructMember
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
-  std::atomic<int>* counter = nullptr;
+  std::atomic<int> *counter = nullptr;
 
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher &dispatcher)
   {
     if (counter) { counter->fetch_add(1, std::memory_order_relaxed); }
     dispatcher.emit(Ping{ event.value + 1 });
@@ -60,9 +59,9 @@ struct D_OwnThread
   // cppcheck-suppress unusedStructMember
   static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
 
-  std::atomic<int>* counter = nullptr;
+  std::atomic<int> *counter = nullptr;
 
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher &dispatcher)
   {
     if (counter) { counter->fetch_add(1, std::memory_order_relaxed); }
     dispatcher.emit(Pong{ event.value + 1 });
@@ -83,7 +82,7 @@ struct A_SameThread
   int counter = 0;
   int last_value = 0;
 
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher &dispatcher)
   {
     ++counter;
     last_value = event.value;
@@ -100,7 +99,7 @@ struct D_OwnThread_ForMixed
 
   std::atomic<int> counter{ 0 };
 
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher &dispatcher)
   {
     counter.fetch_add(1, std::memory_order_relaxed);
     dispatcher.emit(Pong{ event.value + 1 });
@@ -120,7 +119,7 @@ struct A_SameThread_Relay
 
   int counter = 0;
 
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher &dispatcher)
   {
     ++counter;
     dispatcher.emit(Ping{ event.value + 1 });
@@ -137,7 +136,7 @@ struct D_OwnThread_Starter
   std::atomic<int> counter{ 0 };
   std::atomic<int> last_value{ 0 };
 
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher &dispatcher)
   {
     counter.fetch_add(1, std::memory_order_relaxed);
     last_value.store(event.value, std::memory_order_relaxed);
@@ -152,7 +151,7 @@ struct D_OwnThread_Starter
 namespace {
 constexpr int kOwnThreadTargetCount = 10'000'000;
 constexpr int kMixedTargetCount = 1'000'000;
-}  // namespace
+}// namespace
 
 void benchmark_ownthread_to_ownthread()
 {
