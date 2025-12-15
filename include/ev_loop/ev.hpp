@@ -488,10 +488,12 @@ public:
   {
     if (!has_data_.load(std::memory_order_acquire)) { return nullptr; }
     std::scoped_lock lock(mutex_);
+    // LCOV_EXCL_START - race condition: another thread consumed last item between flag check and lock
     if (head_ == tail_) {
       has_data_.store(false, std::memory_order_release);
       return nullptr;
     }
+    // LCOV_EXCL_STOP
     current_ = std::move(buffer_[head_++ & mask_]);
     if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
     return &current_;
