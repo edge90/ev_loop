@@ -59,22 +59,28 @@ template<typename List, typename T> struct contains : std::false_type
 {
 };
 
-template<typename T, typename... Ts> struct contains<type_list<Ts...>, T> : std::disjunction<std::is_same<T, Ts>...>
+// Use fold expression instead of std::disjunction for fewer template instantiations
+template<typename T, typename... Ts>
+struct contains<type_list<Ts...>, T> : std::bool_constant<(std::is_same_v<T, Ts> || ...)>
 {
 };
 
 template<typename List, typename T> inline constexpr bool contains_v = contains<List, T>::value;
 
-// Type list index lookup
-template<typename T, typename... Ts> struct index_of;
-
-template<typename T, typename... Ts> struct index_of<T, T, Ts...> : std::integral_constant<std::size_t, 0>
+// Type list index lookup using O(1) fold expression
+template<typename T, typename... Ts> struct index_of
 {
-};
+private:
+  template<std::size_t... Is> static consteval std::size_t find(std::index_sequence<Is...> /*unused*/)
+  {
+    std::size_t result = sizeof...(Ts); // Invalid index if not found
+    // NOLINTNEXTLINE(readability-simplify-boolean-expr)
+    (void)((std::is_same_v<T, Ts> ? (result = Is, true) : false) || ...);
+    return result;
+  }
 
-template<typename T, typename U, typename... Ts>
-struct index_of<T, U, Ts...> : std::integral_constant<std::size_t, 1 + index_of<T, Ts...>::value>
-{
+public:
+  static constexpr std::size_t value = find(std::make_index_sequence<sizeof...(Ts)>{});
 };
 
 template<typename T, typename... Ts> inline constexpr std::size_t index_of_v = index_of<T, Ts...>::value;
@@ -85,13 +91,12 @@ template<std::size_t I, typename... Ts> using type_at_t = std::tuple_element_t<I
 // Check if two type_lists have any overlapping types
 template<typename List1, typename List2> struct lists_overlap;
 
-template<typename List2> struct lists_overlap<type_list<>, List2> : std::false_type
+template<typename... Ts, typename List2>
+struct lists_overlap<type_list<Ts...>, List2> : std::bool_constant<(contains_v<List2, Ts> || ...)>
 {
 };
 
-template<typename T, typename... Ts, typename List2>
-struct lists_overlap<type_list<T, Ts...>, List2>
-  : std::bool_constant<contains_v<List2, T> || lists_overlap<type_list<Ts...>, List2>::value>
+template<typename List2> struct lists_overlap<type_list<>, List2> : std::false_type
 {
 };
 
@@ -241,7 +246,9 @@ private:
 
   template<std::size_t... Is> void destroy_at_index(std::index_sequence<Is...> /*unused*/)
   {
-    (void)((tag == Is ? (destroy_type<Is>(), true) : false) || ...);
+    using destroy_fn = void (TaggedEvent::*)();
+    static constexpr std::array<destroy_fn, sizeof...(Is)> table = { &TaggedEvent::destroy_type<Is>... };
+    (this->*table[tag])();
   }
 
   template<std::size_t I> void destroy_type()
@@ -260,7 +267,9 @@ private:
 
   template<std::size_t... Is> void copy_at_index(const TaggedEvent& other, std::index_sequence<Is...> /*unused*/)
   {
-    (void)((tag == Is ? (copy_type<Is>(other), true) : false) || ...);
+    using copy_fn = void (TaggedEvent::*)(const TaggedEvent&);
+    static constexpr std::array<copy_fn, sizeof...(Is)> table = { &TaggedEvent::copy_type<Is>... };
+    (this->*table[tag])(other);
   }
 
   template<std::size_t I> void copy_type(const TaggedEvent& other)
@@ -277,8 +286,9 @@ private:
 
   template<std::size_t... Is> void move_at_index(TaggedEvent&& other, std::index_sequence<Is...> /*unused*/)
   {
-    // NOLINTNEXTLINE(readability-simplify-boolean-expr) ; LCOV_EXCL_LINE - fold expression confuses coverage
-    (void)((tag == Is ? (move_type<Is>(std::move(other)), true) : false) || ...);
+    using move_fn = void (TaggedEvent::*)(TaggedEvent&&);
+    static constexpr std::array<move_fn, sizeof...(Is)> table = { &TaggedEvent::move_type<Is>... };
+    (this->*table[tag])(std::move(other));
   }
 
   // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved)
@@ -300,13 +310,16 @@ template<typename... Ts> struct to_tagged_event<type_list<Ts...>>
 
 template<typename List> using to_tagged_event_t = typename to_tagged_event<List>::type;
 
-// Fast tagged event dispatch
+// Fast tagged event dispatch using lookup table
 template<typename Tagged, typename Func, std::size_t... Is>
 // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
 constexpr void fast_dispatch_impl(Tagged& tagged, Func&& func, std::index_sequence<Is...> /*unused*/)
 {
-  const bool dispatched = ((tagged.index() == Is ? (func(tagged.template get<Is>()), true) : false) || ...);
-  if (!dispatched) [[unlikely]] { std::unreachable(); }
+  using dispatch_fn = void (*)(Tagged&, Func&&);
+  static constexpr std::array<dispatch_fn, sizeof...(Is)> table = { +[](Tagged& t, Func&& f) {
+    f(t.template get<Is>());
+  }... };
+  table[tagged.index()](tagged, std::forward<Func>(func));
 }
 
 template<typename... Events, typename Func> constexpr void fast_dispatch(TaggedEvent<Events...>& tagged, Func&& func)
@@ -1001,37 +1014,133 @@ private:
 // Collect all event types that same-thread receivers handle
 // =============================================================================
 
-template<typename... Receivers> struct collect_same_thread_events;
+// Helper to get events from a single same-thread receiver (or empty list)
+template<typename R>
+using same_thread_events_from =
+  std::conditional_t<is_receiver<R> && get_thread_mode<R>() == ThreadMode::SameThread, get_receives_t<R>, type_list<>>;
 
-template<> struct collect_same_thread_events<>
+// Concatenate multiple type_lists into one using O(log N) recursion depth
+template<typename... Lists> struct concat_type_lists;
+
+template<> struct concat_type_lists<>
 {
   using type = type_list<>;
 };
 
-template<typename R, typename... Rs> struct collect_same_thread_events<R, Rs...>
+template<typename... Ts> struct concat_type_lists<type_list<Ts...>>
 {
-private:
-  using rest = typename collect_same_thread_events<Rs...>::type;
-  // Only collect events from receivers (skip external emitters)
-  using this_events = std::
-    conditional_t<is_receiver<R> && get_thread_mode<R>() == ThreadMode::SameThread, get_receives_t<R>, type_list<>>;
+  using type = type_list<Ts...>;
+};
 
-  template<typename L1, typename L2> struct merge_unique;
+template<typename... T1s, typename... T2s> struct concat_type_lists<type_list<T1s...>, type_list<T2s...>>
+{
+  using type = type_list<T1s..., T2s...>;
+};
 
-  template<typename... T1s> struct merge_unique<type_list<T1s...>, type_list<>>
+// Binary tree reduction: process 4 lists at a time, reducing depth by 4x
+template<typename L1, typename L2, typename L3, typename L4, typename... Rest>
+struct concat_type_lists<L1, L2, L3, L4, Rest...>
+{
+  using type = typename concat_type_lists<typename concat_type_lists<L1, L2>::type,
+    typename concat_type_lists<L3, L4>::type,
+    Rest...>::type;
+};
+
+// Handle 3 lists case
+template<typename L1, typename L2, typename L3> struct concat_type_lists<L1, L2, L3>
+{
+  using type = typename concat_type_lists<typename concat_type_lists<L1, L2>::type, L3>::type;
+};
+
+// Compute indices of first occurrence for each type using consteval
+// Returns array where first_occurrence[i] = j means type at index i first appears at index j
+template<typename... Ts> consteval auto compute_first_occurrences()
+{
+  std::array<std::size_t, sizeof...(Ts)> result{};
+  // Use fold expression to find first occurrence of each type
+  std::size_t idx = 0;
+  ((result[idx] = index_of_v<Ts, Ts...>, ++idx), ...);
+  return result;
+}
+
+// Compute which indices contain first occurrences (unique types)
+template<std::size_t N> consteval auto compute_unique_indices(const std::array<std::size_t, N>& first_occ)
+{
+  std::size_t count = 0;
+  for (std::size_t i = 0; i < N; ++i) {
+    if (first_occ[i] == i) ++count;
+  }
+  std::array<std::size_t, N> indices{}; // Over-allocate, actual count stored at index 0 position N-1
+  std::size_t j = 0;
+  for (std::size_t i = 0; i < N; ++i) {
+    if (first_occ[i] == i) indices[j++] = i;
+  }
+  return std::pair{ indices, count };
+}
+
+// Select types at specific indices from a type_list
+template<typename List, std::size_t... Is> struct select_types;
+
+template<typename... Ts, std::size_t... Is> struct select_types<type_list<Ts...>, Is...>
+{
+  using type = type_list<type_at_t<Is, Ts...>...>;
+};
+
+// Helper to extract unique types using precomputed indices
+template<typename List, typename IndicesSeq> struct unique_types_from_indices;
+
+template<typename List, std::size_t... Is> struct unique_types_from_indices<List, std::index_sequence<Is...>>
+{
+  using type = typename select_types<List, Is...>::type;
+};
+
+// Build index_sequence from constexpr array and count
+template<typename List, std::size_t MaxN> struct unique_types_builder
+{
+  static constexpr auto first_occ = []<typename... Ts>(type_list<Ts...>) { return compute_first_occurrences<Ts...>(); }(
+                                      List{});
+  static constexpr auto idx_info = compute_unique_indices(first_occ);
+  static constexpr auto unique_idx_array = idx_info.first;
+  static constexpr std::size_t unique_count = idx_info.second;
+
+  // Build the unique type_list by selecting at computed indices
+  template<std::size_t... Is>
+  static auto make_type(std::index_sequence<Is...> /*unused*/)
+    -> type_list<type_at_t<unique_idx_array[Is], std::tuple<>>...>;
+
+  // We need to convert array to index_sequence - use recursive helper
+  template<std::size_t... Is> struct apply_indices
   {
-    using type = type_list<T1s...>;
+    using type = typename select_types<List, unique_idx_array[Is]...>::type;
   };
+};
 
-  template<typename... T1s, typename T, typename... T2s> struct merge_unique<type_list<T1s...>, type_list<T, T2s...>>
-  {
-    using type = std::conditional_t<contains_v<type_list<T1s...>, T>,
-      typename merge_unique<type_list<T1s...>, type_list<T2s...>>::type,
-      typename merge_unique<type_list<T1s..., T>, type_list<T2s...>>::type>;
-  };
+// Generate index sequence 0, 1, 2, ..., N-1 and apply to array
+template<typename List, std::size_t Count, std::size_t... Is>
+auto unique_types_apply(std::index_sequence<Is...> /*unused*/) ->
+  typename unique_types_builder<List, type_list_size_v<List>>::template apply_indices<Is...>::type;
 
-public:
-  using type = typename merge_unique<this_events, rest>::type;
+template<typename List> struct unique_types_impl
+{
+  static constexpr std::size_t max_n = type_list_size_v<List>;
+  using builder = unique_types_builder<List, max_n>;
+  using type =
+    decltype(unique_types_apply<List, builder::unique_count>(std::make_index_sequence<builder::unique_count>{}));
+};
+
+// Handle empty list
+template<> struct unique_types_impl<type_list<>>
+{
+  using type = type_list<>;
+};
+
+template<typename List> using unique_types_t = typename unique_types_impl<List>::type;
+
+// Collect and deduplicate: concatenate all same-thread receives lists, then unique
+template<typename... Receivers> struct collect_same_thread_events
+{
+  using concatenated = typename concat_type_lists<same_thread_events_from<Receivers>...>::type;
+  using type = unique_types_t<concatenated>;
 };
 
 template<typename... Receivers>
@@ -1042,7 +1151,11 @@ using collect_same_thread_events_t = typename collect_same_thread_events<Receive
 // =============================================================================
 
 // Check if any event in EmitsList is contained in SameThreadEvents
-template<typename EmitsList, typename SameThreadEvents> struct emits_to_same_thread : std::false_type
+template<typename EmitsList, typename SameThreadEvents> struct emits_to_same_thread;
+
+template<typename... Es, typename SameThreadEvents>
+struct emits_to_same_thread<type_list<Es...>, SameThreadEvents>
+  : std::bool_constant<(contains_v<SameThreadEvents, Es> || ...)>
 {
 };
 
@@ -1050,26 +1163,19 @@ template<typename SameThreadEvents> struct emits_to_same_thread<type_list<>, Sam
 {
 };
 
-template<typename E, typename... Es, typename SameThreadEvents>
-struct emits_to_same_thread<type_list<E, Es...>, SameThreadEvents>
-  : std::bool_constant<contains_v<SameThreadEvents, E>
-                       || emits_to_same_thread<type_list<Es...>, SameThreadEvents>::value>
-{
-};
-
 // Check if any OwnThread receiver emits to same-thread receivers
-template<typename SameThreadEvents, typename... Receivers> struct has_remote_producers;
-
-template<typename SameThreadEvents> struct has_remote_producers<SameThreadEvents> : std::false_type
+template<typename SameThreadEvents, typename... Receivers> struct has_remote_producers
 {
+  template<typename R>
+  static constexpr bool is_remote_producer =
+    get_thread_mode<R>() == ThreadMode::OwnThread && emits_to_same_thread<get_emits_t<R>, SameThreadEvents>::value;
+
+  static constexpr bool value = (is_remote_producer<Receivers> || ...);
 };
 
-template<typename SameThreadEvents, typename R, typename... Rs>
-struct has_remote_producers<SameThreadEvents, R, Rs...>
-  : std::bool_constant<(get_thread_mode<R>() == ThreadMode::OwnThread
-                         && emits_to_same_thread<get_emits_t<R>, SameThreadEvents>::value)
-                       || has_remote_producers<SameThreadEvents, Rs...>::value>
+template<typename SameThreadEvents> struct has_remote_producers<SameThreadEvents>
 {
+  static constexpr bool value = false;
 };
 
 template<typename SameThreadEvents, typename... Receivers>
@@ -1080,19 +1186,13 @@ inline constexpr bool has_remote_producers_v = has_remote_producers<SameThreadEv
 // Used to determine if SPSC queue is safe (count <= 1) or MPSC needed (count > 1)
 // =============================================================================
 
-template<typename TargetReceives, typename... Receivers> struct count_ownthread_producers;
-
-template<typename TargetReceives> struct count_ownthread_producers<TargetReceives>
+template<typename TargetReceives, typename... Receivers> struct count_ownthread_producers
 {
-  static constexpr std::size_t value = 0;
-};
+  template<typename R>
+  static constexpr std::size_t count_one =
+    (get_thread_mode<R>() == ThreadMode::OwnThread && lists_overlap_v<get_emits_t<R>, TargetReceives>) ? 1 : 0;
 
-template<typename TargetReceives, typename R, typename... Rs> struct count_ownthread_producers<TargetReceives, R, Rs...>
-{
-  static constexpr bool is_ownthread_producer =
-    get_thread_mode<R>() == ThreadMode::OwnThread && lists_overlap_v<get_emits_t<R>, TargetReceives>;
-  static constexpr std::size_t value =
-    (is_ownthread_producer ? 1 : 0) + count_ownthread_producers<TargetReceives, Rs...>::value;
+  static constexpr std::size_t value = (count_one<Receivers> + ... + 0);
 };
 
 template<typename TargetReceives, typename... Receivers>
@@ -1101,55 +1201,46 @@ inline constexpr std::size_t count_ownthread_producers_v =
 
 // Check if any SameThread receiver emits events that target receives
 // (meaning event loop thread can be a producer)
-template<typename TargetReceives, typename... Receivers> struct has_samethread_producer;
+template<typename TargetReceives, typename... Receivers> struct has_samethread_producer
+{
+  // Only consider actual receivers (not external emitters) - external emitters are counted separately
+  template<typename R>
+  static constexpr bool is_producer = !is_external_emitter<R> && get_thread_mode<R>() == ThreadMode::SameThread
+                                      && lists_overlap_v<get_emits_t<R>, TargetReceives>;
+
+  static constexpr bool value = (is_producer<Receivers> || ...);
+};
 
 template<typename TargetReceives> struct has_samethread_producer<TargetReceives>
 {
   static constexpr bool value = false;
 };
 
-template<typename TargetReceives, typename R, typename... Rs> struct has_samethread_producer<TargetReceives, R, Rs...>
-{
-  // Only consider actual receivers (not external emitters) - external emitters are counted separately
-  static constexpr bool is_samethread_producer = !is_external_emitter<R>
-                                                 && get_thread_mode<R>() == ThreadMode::SameThread
-                                                 && lists_overlap_v<get_emits_t<R>, TargetReceives>;
-  static constexpr bool value = is_samethread_producer || has_samethread_producer<TargetReceives, Rs...>::value;
-};
-
 template<typename TargetReceives, typename... Receivers>
 inline constexpr bool has_samethread_producer_v = has_samethread_producer<TargetReceives, Receivers...>::value;
 
 // Count external emitters that can produce events to a target receiver
-template<typename TargetReceives, typename... Items> struct count_external_producers;
-
-template<typename TargetReceives> struct count_external_producers<TargetReceives>
+template<typename TargetReceives, typename... Items> struct count_external_producers
 {
-  static constexpr std::size_t value = 0;
-};
+  template<typename T>
+  static constexpr std::size_t count_one =
+    (is_external_emitter<T> && lists_overlap_v<get_emits_t<T>, TargetReceives>) ? 1 : 0;
 
-template<typename TargetReceives, typename T, typename... Ts> struct count_external_producers<TargetReceives, T, Ts...>
-{
-  static constexpr bool is_external_producer =
-    is_external_emitter<T> && lists_overlap_v<get_emits_t<T>, TargetReceives>;
-  static constexpr std::size_t value =
-    (is_external_producer ? 1 : 0) + count_external_producers<TargetReceives, Ts...>::value;
+  static constexpr std::size_t value = (count_one<Items> + ... + 0);
 };
 
 template<typename TargetReceives, typename... Items>
 inline constexpr std::size_t count_external_producers_v = count_external_producers<TargetReceives, Items...>::value;
 
 // Check if any external emitter is registered
-template<typename... Items> struct has_external_emitters;
+template<typename... Items> struct has_external_emitters
+{
+  static constexpr bool value = (is_external_emitter<Items> || ...);
+};
 
 template<> struct has_external_emitters<>
 {
   static constexpr bool value = false;
-};
-
-template<typename T, typename... Ts> struct has_external_emitters<T, Ts...>
-{
-  static constexpr bool value = is_external_emitter<T> || has_external_emitters<Ts...>::value;
 };
 
 template<typename... Items> inline constexpr bool has_external_emitters_v = has_external_emitters<Items...>::value;
@@ -1349,7 +1440,15 @@ public:
 
   void dispatch_event(tagged_event& event)
   {
-    fast_dispatch(event, [this]<typename E>(E& event2) { this->template fanout_to_same_thread<0>(event2); });
+    fast_dispatch(event, [this]<typename E>(E& event2) {
+      constexpr std::size_t event_idx = index_of_in_list<std::decay_t<E>>(same_thread_events{});
+      constexpr std::size_t count = same_thread_count_table_[event_idx];
+      if constexpr (count == 1) {
+        this->template dispatch_single_fast<0>(std::move(event2));
+      } else if constexpr (count > 1) {
+        this->template fanout_to_same_thread_fold<0>(event2, std::make_index_sequence<sizeof...(Receivers)>{});
+      }
+    });
   }
 
   void stop()
@@ -1416,48 +1515,58 @@ private:
 
   template<std::size_t... Is> void stop_all(std::index_sequence<Is...> /*unused*/) { (stop_one<Is>(), ...); }
 
-  // Count same-thread receivers that handle Event starting from index I
+  // Count same-thread receivers that handle Event using fold expression (O(1) depth)
+  template<std::size_t I, typename Event, std::size_t... Is>
+  static consteval std::size_t count_same_thread_receivers_impl(std::index_sequence<Is...> /*unused*/)
+  {
+    return ((Is >= I && get_thread_mode<std::tuple_element_t<Is, std::tuple<Receivers...>>>() == ThreadMode::SameThread
+                  && can_receive<std::tuple_element_t<Is, std::tuple<Receivers...>>, Event>
+                ? 1
+                : 0)
+            + ... + 0);
+  }
+
   template<std::size_t I, typename Event> static consteval std::size_t count_same_thread_receivers()
   {
-    if constexpr (I >= sizeof...(Receivers)) {
-      return 0;
-    } else {
-      using Receiver = std::tuple_element_t<I, std::tuple<Receivers...>>;
-      constexpr bool handles = get_thread_mode<Receiver>() == ThreadMode::SameThread && can_receive<Receiver, Event>;
-      return (handles ? 1 : 0) + count_same_thread_receivers<I + 1, Event>();
-    }
+    return count_same_thread_receivers_impl<I, Event>(std::make_index_sequence<sizeof...(Receivers)>{});
   }
 
-  // Count own-thread receivers that handle Event starting from index I
+  // Count own-thread receivers that handle Event using fold expression (O(1) depth)
+  template<std::size_t I, typename Event, std::size_t... Is>
+  static consteval std::size_t count_own_thread_receivers_impl(std::index_sequence<Is...> /*unused*/)
+  {
+    return ((Is >= I && get_thread_mode<std::tuple_element_t<Is, std::tuple<Receivers...>>>() == ThreadMode::OwnThread
+                  && can_receive<std::tuple_element_t<Is, std::tuple<Receivers...>>, Event>
+                ? 1
+                : 0)
+            + ... + 0);
+  }
+
   template<std::size_t I, typename Event> static consteval std::size_t count_own_thread_receivers()
   {
-    if constexpr (I >= sizeof...(Receivers)) {
-      return 0;
-    } else {
-      using Receiver = std::tuple_element_t<I, std::tuple<Receivers...>>;
-      constexpr bool handles = get_thread_mode<Receiver>() == ThreadMode::OwnThread && can_receive<Receiver, Event>;
-      return (handles ? 1 : 0) + count_own_thread_receivers<I + 1, Event>();
-    }
+    return count_own_thread_receivers_impl<I, Event>(std::make_index_sequence<sizeof...(Receivers)>{});
   }
 
-  // Fan out event to all same-thread receivers that handle it
-  // Remaining = how many more receivers after this one will handle it
-  template<std::size_t I, std::size_t Remaining, typename Event> void fanout_to_same_thread_impl(Event& event)
+  // Fan out event to all same-thread receivers that handle it using fold expression
+  template<std::size_t I, typename Event, std::size_t... Is>
+  void fanout_to_same_thread_fold(Event& event, std::index_sequence<Is...> /*unused*/)
   {
-    if constexpr (I < sizeof...(Receivers)) {
-      using Receiver = std::tuple_element_t<I, std::tuple<Receivers...>>;
-      if constexpr (get_thread_mode<Receiver>() == ThreadMode::SameThread
-                    && can_receive<Receiver, std::decay_t<Event>>) {
-        if constexpr (Remaining == 1) {
-          std::get<I>(receivers_)->dispatch(std::move(event));
-        } else {
-          std::get<I>(receivers_)->dispatch(event);
-          fanout_to_same_thread_impl<I + 1, Remaining - 1>(event);
+    constexpr std::size_t count = count_same_thread_receivers<I, std::decay_t<Event>>();
+    std::size_t dispatched = 0;
+    (
+      [&]<std::size_t Idx>() {
+        using Receiver = std::tuple_element_t<Idx, std::tuple<Receivers...>>;
+        if constexpr (get_thread_mode<Receiver>() == ThreadMode::SameThread
+                      && can_receive<Receiver, std::decay_t<Event>>) {
+          ++dispatched;
+          if (dispatched == count) {
+            std::get<Idx>(receivers_)->dispatch(std::move(event));
+          } else {
+            std::get<Idx>(receivers_)->dispatch(event);
+          }
         }
-      } else {
-        fanout_to_same_thread_impl<I + 1, Remaining>(event);
-      }
-    }
+      }.template operator()<Is>(),
+      ...);
   }
 
   template<std::size_t I, typename Event> void fanout_to_same_thread(Event& event)
@@ -1467,48 +1576,132 @@ private:
       // Fast path: single receiver, find it and dispatch directly
       dispatch_to_single_receiver<I>(std::move(event));
     } else if constexpr (count > 1) {
-      fanout_to_same_thread_impl<I, count>(event);
+      fanout_to_same_thread_fold<I>(event, std::make_index_sequence<sizeof...(Receivers)>{});
     }
   }
 
-  // Direct dispatch to the single same-thread receiver for this event type
+  // Find at compile time which receiver index handles an event type
+  template<typename Event, std::size_t... Is>
+  static consteval std::size_t find_single_receiver_impl(std::index_sequence<Is...> /*unused*/)
+  {
+    std::size_t result = sizeof...(Receivers);
+    // NOLINTNEXTLINE(readability-simplify-boolean-expr)
+    (void)((get_thread_mode<std::tuple_element_t<Is, std::tuple<Receivers...>>>() == ThreadMode::SameThread
+                 && can_receive<std::tuple_element_t<Is, std::tuple<Receivers...>>, Event>
+               ? (result == sizeof...(Receivers) ? (result = Is, true) : false)
+               : false)
+           || ...);
+    return result;
+  }
+
+  template<typename Event> static consteval std::size_t find_single_receiver_index()
+  {
+    return find_single_receiver_impl<Event>(std::make_index_sequence<sizeof...(Receivers)>{});
+  }
+
+  // Helper to get index in type_list
+  template<typename T, typename... Ts> static consteval std::size_t index_of_in_list(type_list<Ts...> /*unused*/ = {})
+  {
+    return index_of_v<T, Ts...>;
+  }
+
+  // Helper to update tables for a single receiver's receives list - O(R) where R is receives count
+  template<std::size_t RecvIdx, typename... AllEvents, typename... ReceivedEvents>
+  static consteval void update_tables_for_receiver(std::array<std::size_t, sizeof...(AllEvents)>& dispatch,
+    std::array<std::size_t, sizeof...(AllEvents)>& count,
+    type_list<AllEvents...> /*unused*/,
+    type_list<ReceivedEvents...> /*unused*/)
+  {
+    // Only iterate events this receiver actually handles (not all events)
+    (
+      [&]<typename E>() {
+        constexpr std::size_t idx = index_of_v<E, AllEvents...>;
+        if constexpr (idx < sizeof...(AllEvents)) {
+          if (dispatch[idx] == sizeof...(Receivers)) { dispatch[idx] = RecvIdx; }
+          ++count[idx];
+        }
+      }.template operator()<ReceivedEvents>(),
+      ...);
+  }
+
+  // Build dispatch and count tables - O(N + sum of receives) not O(N*M)
+  // Returns pair of {dispatch_table, count_table}
+  template<typename... Events, std::size_t... RecvIs>
+  static consteval auto build_tables_from_receivers(type_list<Events...> events,
+    std::index_sequence<RecvIs...> /*unused*/)
+  {
+    constexpr std::size_t num_events = sizeof...(Events);
+    std::array<std::size_t, num_events> dispatch_table{};
+    std::array<std::size_t, num_events> count_table{};
+
+    // Initialize dispatch table to invalid
+    for (auto& d : dispatch_table) { d = sizeof...(Receivers); }
+
+    // For each receiver, update tables only for events it actually handles
+    (
+      [&]<std::size_t RecvIdx>() {
+        using Receiver = std::tuple_element_t<RecvIdx, std::tuple<Receivers...>>;
+        if constexpr (get_thread_mode<Receiver>() == ThreadMode::SameThread) {
+          update_tables_for_receiver<RecvIdx>(dispatch_table, count_table, events, get_receives_t<Receiver>{});
+        }
+      }.template operator()<RecvIs>(),
+      ...);
+
+    return std::pair{ dispatch_table, count_table };
+  }
+
+  static constexpr auto dispatch_tables_ =
+    build_tables_from_receivers(same_thread_events{}, std::make_index_sequence<sizeof...(Receivers)>{});
+  static constexpr auto single_dispatch_table_ = dispatch_tables_.first;
+  static constexpr auto same_thread_count_table_ = dispatch_tables_.second;
+
+  // Dispatch using precomputed table - one lookup instead of N checks per dispatch
+  template<std::size_t I, typename Event> void dispatch_single_fast(Event&& event)
+  {
+    constexpr std::size_t event_idx = index_of_in_list<std::decay_t<Event>>(same_thread_events{});
+    constexpr std::size_t recv_idx = single_dispatch_table_[event_idx];
+    if constexpr (recv_idx < sizeof...(Receivers)) {
+      std::get<recv_idx>(receivers_)->dispatch(std::forward<Event>(event));
+    }
+  }
+
+  // Direct dispatch using precomputed receiver index - O(1) template depth
   template<std::size_t I, typename Event> void dispatch_to_single_receiver(Event&& event)
   {
-    if constexpr (I < sizeof...(Receivers)) {
-      using Receiver = std::tuple_element_t<I, std::tuple<Receivers...>>;
-      if constexpr (get_thread_mode<Receiver>() == ThreadMode::SameThread
-                    && can_receive<Receiver, std::decay_t<Event>>) {
-        std::get<I>(receivers_)->dispatch(std::forward<Event>(event));
-      } else {
-        dispatch_to_single_receiver<I + 1>(std::forward<Event>(event));
-      }
+    constexpr std::size_t receiver_idx = find_single_receiver_index<std::decay_t<Event>>();
+    if constexpr (receiver_idx < sizeof...(Receivers)) {
+      std::get<receiver_idx>(receivers_)->dispatch(std::forward<Event>(event));
     }
   }
 
-  // Push to own-thread receivers
-  // Remaining = how many more receivers after this one will handle it
-  template<std::size_t I, std::size_t Remaining, typename Event> void push_to_own_thread_impl(Event&& event)
+  // Push to own-thread receivers using fold expression
+  template<std::size_t I, typename Event, std::size_t... Is>
+  void push_to_own_thread_fold(Event&& event, std::index_sequence<Is...> /*unused*/)
   {
-    if constexpr (I < sizeof...(Receivers)) {
-      using Receiver = std::tuple_element_t<I, std::tuple<Receivers...>>;
-      if constexpr (get_thread_mode<Receiver>() == ThreadMode::OwnThread
-                    && can_receive<Receiver, std::decay_t<Event>>) {
-        if constexpr (Remaining == 1) {
-          std::get<I>(receivers_)->push(std::forward<Event>(event));
-        } else {
-          std::get<I>(receivers_)->push(event);
-          push_to_own_thread_impl<I + 1, Remaining - 1>(std::forward<Event>(event));
+    constexpr std::size_t count = count_own_thread_receivers<I, std::decay_t<Event>>();
+    std::size_t pushed = 0;
+    (
+      [&]<std::size_t Idx>() {
+        using Receiver = std::tuple_element_t<Idx, std::tuple<Receivers...>>;
+        if constexpr (get_thread_mode<Receiver>() == ThreadMode::OwnThread
+                      && can_receive<Receiver, std::decay_t<Event>>) {
+          ++pushed;
+          if (pushed == count) {
+            std::get<Idx>(receivers_)->push(std::forward<Event>(event));
+          } else {
+            std::get<Idx>(receivers_)->push(event);
+          }
         }
-      } else {
-        push_to_own_thread_impl<I + 1, Remaining>(std::forward<Event>(event));
-      }
-    }
+      }.template operator()<Is>(),
+      ...);
   }
 
   template<std::size_t I, typename Event> void push_to_own_thread(Event&& event)
   {
     constexpr std::size_t count = count_own_thread_receivers<I, std::decay_t<Event>>();
-    if constexpr (count > 0) { push_to_own_thread_impl<I, count>(std::forward<Event>(event)); }
+    if constexpr (count > 0) {
+      push_to_own_thread_fold<I>(std::forward<Event>(event), std::make_index_sequence<sizeof...(Receivers)>{});
+    }
   }
 
   std::tuple<ReceiverStorage<Receivers, self_type>...> receivers_;
