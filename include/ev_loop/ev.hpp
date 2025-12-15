@@ -796,6 +796,8 @@ private:
 
 template<typename... Receivers> class EventLoop;
 
+template<typename... Receivers> class SharedEventLoopPtr;
+
 template<typename EventLoopType> class SameThreadDispatcher;
 
 template<typename Emitter, typename EventLoopType> class OwnThreadDispatcher;
@@ -1351,23 +1353,16 @@ public:
   // Emit from EV thread (uses local queue)
   template<typename Event> void emit(Event&& event) { queue_event<false>(std::forward<Event>(event)); }
 
-  template<typename Receiver, typename Self> [[nodiscard]] auto& get(this Self& self)
+  template<typename Receiver, typename Self> [[nodiscard]] auto& get(this Self& self) noexcept
   {
     return std::get<ReceiverStorage<Receiver, self_type>>(self.receivers_)->get();
-  }
-
-  // Get a typed external emitter handle - only available if EmitterType is registered
-  template<typename EmitterType>
-    requires(is_external_emitter<EmitterType> && contains_v<type_list<Receivers...>, EmitterType>)
-  [[nodiscard]] TypedExternalEmitter<EmitterType, self_type> get_external_emitter() noexcept
-  {
-    return TypedExternalEmitter<EmitterType, self_type>(this);
   }
 
 private:
   friend class SameThreadDispatcher<self_type>;
   template<typename, typename> friend class OwnThreadDispatcher;
   template<typename, typename> friend class TypedExternalEmitter;
+  template<typename...> friend class SharedEventLoopPtr;
 
   // Called by SameThreadDispatcher (uses local queue)
   template<typename Event> void queue_local(Event&& event) { queue_event<false>(std::forward<Event>(event)); }
@@ -1543,23 +1538,82 @@ private:
 // =============================================================================
 // External emitter - allows code outside the event loop to inject events
 // EmitterType specifies which events this emitter is allowed to emit
+// Uses weak_ptr for safe access after EventLoop destruction
 // =============================================================================
 
 template<typename EmitterType, typename EventLoopType> class TypedExternalEmitter
 {
 public:
-  explicit TypedExternalEmitter(EventLoopType* loop) noexcept : event_loop_(loop) {}
+  explicit TypedExternalEmitter(std::shared_ptr<EventLoopType> loop) noexcept : loop_(std::move(loop)) {}
 
   // Only allow emitting events declared in EmitterType::emits
+  // Returns true if event was queued, false if EventLoop was destroyed
   template<typename Event>
     requires can_emit<EmitterType, Event>
-  void emit(Event&& event)
+  bool emit(Event&& event)
   {
-    event_loop_->queue_remote(std::forward<Event>(event));
+    if (auto locked = loop_.lock()) {
+      locked->queue_remote(std::forward<Event>(event));
+      return true;
+    }
+    return false;
+  }
+
+  // Check if the EventLoop is still alive
+  [[nodiscard]] bool is_valid() const noexcept { return !loop_.expired(); }
+
+private:
+  std::weak_ptr<EventLoopType> loop_;
+};
+
+// =============================================================================
+// SharedEventLoopPtr - value-type wrapper that enables external emitters
+// Use this when you need external emitters; use EventLoop directly otherwise
+// Copyable (shares ownership), movable, default destructible
+// =============================================================================
+
+template<typename... Receivers> class SharedEventLoopPtr
+{
+public:
+  using loop_type = EventLoop<Receivers...>;
+
+  SharedEventLoopPtr() : loop_(std::make_shared<loop_type>()) {}
+
+  ~SharedEventLoopPtr() = default;
+  SharedEventLoopPtr(const SharedEventLoopPtr&) = default;
+  SharedEventLoopPtr& operator=(const SharedEventLoopPtr&) = default;
+  SharedEventLoopPtr(SharedEventLoopPtr&&) = default;
+  SharedEventLoopPtr& operator=(SharedEventLoopPtr&&) = default;
+
+  void start() { loop_->start(); }
+  void stop() { loop_->stop(); }
+
+  [[nodiscard]] bool is_running() const noexcept { return loop_->is_running(); }
+
+  template<typename Event> void emit(Event&& event) { loop_->emit(std::forward<Event>(event)); }
+
+  template<typename Receiver, typename Self> [[nodiscard]] auto& get(this Self& self) noexcept
+  {
+    return self.loop_->template get<Receiver>();
+  }
+
+  // Access underlying loop for strategies (e.g., Spin{*shared_loop}.run())
+  [[nodiscard]] loop_type& operator*() noexcept { return *loop_; }
+  [[nodiscard]] const loop_type& operator*() const noexcept { return *loop_; }
+  [[nodiscard]] loop_type* operator->() noexcept { return loop_.get(); }
+  [[nodiscard]] const loop_type* operator->() const noexcept { return loop_.get(); }
+
+  // Get a typed external emitter handle
+  // The returned emitter uses weak_ptr and is safe to use after SharedEventLoopPtr is destroyed
+  template<typename EmitterType>
+    requires(is_external_emitter<EmitterType> && contains_v<type_list<Receivers...>, EmitterType>)
+  [[nodiscard]] TypedExternalEmitter<EmitterType, loop_type> get_external_emitter() noexcept
+  {
+    return TypedExternalEmitter<EmitterType, loop_type>(loop_);
   }
 
 private:
-  EventLoopType* event_loop_;
+  std::shared_ptr<loop_type> loop_;
 };
 
 // =============================================================================
