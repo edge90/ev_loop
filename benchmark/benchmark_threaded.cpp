@@ -1,6 +1,3 @@
-// NOLINTBEGIN(cppcoreguidelines-macro-usage)
-#define EV_USE_SPSC_QUEUE 1
-// NOLINTEND(cppcoreguidelines-macro-usage)
 #include <atomic>
 #include <chrono>
 #include <ev_loop/ev.hpp>

@@ -80,6 +80,38 @@ template<typename T, typename... Ts> inline constexpr std::size_t index_of_v = i
 // Type at index
 template<std::size_t I, typename... Ts> using type_at_t = std::tuple_element_t<I, std::tuple<Ts...>>;
 
+// Check if two type_lists have any overlapping types
+template<typename List1, typename List2> struct lists_overlap;
+
+template<typename List2> struct lists_overlap<type_list<>, List2> : std::false_type
+{
+};
+
+template<typename T, typename... Ts, typename List2>
+struct lists_overlap<type_list<T, Ts...>, List2>
+  : std::bool_constant<contains_v<List2, T> || lists_overlap<type_list<Ts...>, List2>::value>
+{
+};
+
+template<typename List1, typename List2> inline constexpr bool lists_overlap_v = lists_overlap<List1, List2>::value;
+
+// Filter type list by predicate
+template<template<typename> class Pred, typename Result, typename... Ts> struct filter_impl;
+
+template<template<typename> class Pred, typename... Rs> struct filter_impl<Pred, type_list<Rs...>>
+{
+  using type = type_list<Rs...>;
+};
+
+template<template<typename> class Pred, typename... Rs, typename T, typename... Ts>
+struct filter_impl<Pred, type_list<Rs...>, T, Ts...>
+{
+  using type =
+    typename filter_impl<Pred, std::conditional_t<Pred<T>::value, type_list<Rs..., T>, type_list<Rs...>>, Ts...>::type;
+};
+
+template<template<typename> class Pred, typename... Ts>
+using filter_t = typename filter_impl<Pred, type_list<>, Ts...>::type;
 
 // =============================================================================
 // Tagged union (faster than std::variant)
@@ -390,6 +422,46 @@ template<typename T> consteval ThreadMode get_thread_mode()
 // Check if receiver can handle event type
 template<typename Receiver, typename Event>
 concept can_receive = contains_v<get_receives_t<Receiver>, std::decay_t<Event>>;
+
+// External emitter: has emits but no receives (emits-only, not a receiver)
+template<typename T>
+concept is_external_emitter = has_emits<T> && !has_receives<T>;
+
+// Receiver: has receives (may also have emits)
+template<typename T>
+concept is_receiver = has_receives<T>;
+
+// Check if external emitter can emit event type
+template<typename Emitter, typename Event>
+concept can_emit = is_external_emitter<Emitter> && contains_v<get_emits_t<Emitter>, std::decay_t<Event>>;
+
+// Predicate wrappers for filtering (concepts can't be used as template template parameters)
+template<typename T> struct is_receiver_pred : std::bool_constant<is_receiver<T>>
+{
+};
+
+template<typename T> struct is_external_emitter_pred : std::bool_constant<is_external_emitter<T>>
+{
+};
+
+// Get size of type_list
+template<typename List> struct type_list_size;
+
+template<typename... Ts> struct type_list_size<type_list<Ts...>> : std::integral_constant<std::size_t, sizeof...(Ts)>
+{
+};
+
+template<typename List> inline constexpr std::size_t type_list_size_v = type_list_size<List>::value;
+
+// Get type at index from type_list
+template<std::size_t I, typename List> struct type_list_at;
+
+template<std::size_t I, typename... Ts> struct type_list_at<I, type_list<Ts...>>
+{
+  using type = type_at_t<I, Ts...>;
+};
+
+template<std::size_t I, typename List> using type_list_at_t = typename type_list_at<I, List>::type;
 
 // =============================================================================
 // Lock-free SPSC ring buffer for maximum throughput
@@ -728,7 +800,7 @@ template<typename EventLoopType> class SameThreadDispatcher;
 
 template<typename Emitter, typename EventLoopType> class OwnThreadDispatcher;
 
-template<typename EventLoopType> class ExternalEmitter;
+template<typename EmitterType, typename EventLoopType> class TypedExternalEmitter;
 
 // =============================================================================
 // Same-thread receiver wrapper
@@ -785,12 +857,13 @@ public:
   using receiver_type = Receiver;
   using receives_list = get_receives_t<Receiver>;
   using tagged_event = to_tagged_event_t<receives_list>;
-  // Use SPSC for benchmarks (single producer guaranteed), MPSC for general use
-#ifdef EV_USE_SPSC_QUEUE
-  using queue_type = SPSCQueue<tagged_event>;
-#else
-  using queue_type = ThreadSafeRingBuffer<tagged_event>;
-#endif
+
+  // Automatically select queue type based on producer count
+  // SPSC is safe when at most 1 producer thread, otherwise need MPSC
+  static constexpr std::size_t producer_count = EventLoopType::template producer_count_for<Receiver>;
+  using queue_type =
+    std::conditional_t<(producer_count < 2), SPSCQueue<tagged_event>, ThreadSafeRingBuffer<tagged_event>>;
+
   using dispatcher_type = OwnThreadDispatcher<Receiver, EventLoopType>;
 
   template<typename... Args>
@@ -854,26 +927,36 @@ private:
 };
 
 // =============================================================================
+// Empty wrapper for external emitters (no storage needed, just type marker)
+// =============================================================================
+
+template<typename Emitter, typename EventLoopType> class ExternalEmitterWrapper
+{
+public:
+  explicit ExternalEmitterWrapper(EventLoopType* /*loop*/) {}
+};
+
+// =============================================================================
 // Wrapper type selector (avoids instantiating wrong branch)
 // =============================================================================
 
-template<typename Receiver, typename EventLoopType, ThreadMode Mode = get_thread_mode<Receiver>()>
-struct wrapper_selector;
+template<typename T, typename EventLoopType, bool IsReceiver = is_receiver<T>> struct wrapper_selector;
 
-template<typename Receiver, typename EventLoopType>
-struct wrapper_selector<Receiver, EventLoopType, ThreadMode::SameThread>
+// Receiver case: select based on thread mode
+template<typename Receiver, typename EventLoopType> struct wrapper_selector<Receiver, EventLoopType, true>
 {
-  using type = SameThreadWrapper<Receiver, EventLoopType>;
+  using type = std::conditional_t<get_thread_mode<Receiver>() == ThreadMode::OwnThread,
+    OwnThreadWrapper<Receiver, EventLoopType>,
+    SameThreadWrapper<Receiver, EventLoopType>>;
 };
 
-template<typename Receiver, typename EventLoopType>
-struct wrapper_selector<Receiver, EventLoopType, ThreadMode::OwnThread>
+// External emitter case: use empty wrapper
+template<typename Emitter, typename EventLoopType> struct wrapper_selector<Emitter, EventLoopType, false>
 {
-  using type = OwnThreadWrapper<Receiver, EventLoopType>;
+  using type = ExternalEmitterWrapper<Emitter, EventLoopType>;
 };
 
-template<typename Receiver, typename EventLoopType>
-using wrapper_for = typename wrapper_selector<Receiver, EventLoopType>::type;
+template<typename T, typename EventLoopType> using wrapper_for = typename wrapper_selector<T, EventLoopType>::type;
 
 // =============================================================================
 // Receiver storage - handles non-movable wrappers via unique_ptr
@@ -920,8 +1003,9 @@ template<typename R, typename... Rs> struct collect_same_thread_events<R, Rs...>
 {
 private:
   using rest = typename collect_same_thread_events<Rs...>::type;
-  using this_events =
-    std::conditional_t<get_thread_mode<R>() == ThreadMode::SameThread, get_receives_t<R>, type_list<>>;
+  // Only collect events from receivers (skip external emitters)
+  using this_events = std::
+    conditional_t<is_receiver<R> && get_thread_mode<R>() == ThreadMode::SameThread, get_receives_t<R>, type_list<>>;
 
   template<typename L1, typename L2> struct merge_unique;
 
@@ -981,6 +1065,91 @@ struct has_remote_producers<SameThreadEvents, R, Rs...>
 
 template<typename SameThreadEvents, typename... Receivers>
 inline constexpr bool has_remote_producers_v = has_remote_producers<SameThreadEvents, Receivers...>::value;
+
+// =============================================================================
+// Count OwnThread receivers that can produce events to a target receiver
+// Used to determine if SPSC queue is safe (count <= 1) or MPSC needed (count > 1)
+// =============================================================================
+
+template<typename TargetReceives, typename... Receivers> struct count_ownthread_producers;
+
+template<typename TargetReceives> struct count_ownthread_producers<TargetReceives>
+{
+  static constexpr std::size_t value = 0;
+};
+
+template<typename TargetReceives, typename R, typename... Rs> struct count_ownthread_producers<TargetReceives, R, Rs...>
+{
+  static constexpr bool is_ownthread_producer =
+    get_thread_mode<R>() == ThreadMode::OwnThread && lists_overlap_v<get_emits_t<R>, TargetReceives>;
+  static constexpr std::size_t value =
+    (is_ownthread_producer ? 1 : 0) + count_ownthread_producers<TargetReceives, Rs...>::value;
+};
+
+template<typename TargetReceives, typename... Receivers>
+inline constexpr std::size_t count_ownthread_producers_v =
+  count_ownthread_producers<TargetReceives, Receivers...>::value;
+
+// Check if any SameThread receiver emits events that target receives
+// (meaning event loop thread can be a producer)
+template<typename TargetReceives, typename... Receivers> struct has_samethread_producer;
+
+template<typename TargetReceives> struct has_samethread_producer<TargetReceives>
+{
+  static constexpr bool value = false;
+};
+
+template<typename TargetReceives, typename R, typename... Rs> struct has_samethread_producer<TargetReceives, R, Rs...>
+{
+  static constexpr bool is_samethread_producer =
+    get_thread_mode<R>() == ThreadMode::SameThread && lists_overlap_v<get_emits_t<R>, TargetReceives>;
+  static constexpr bool value = is_samethread_producer || has_samethread_producer<TargetReceives, Rs...>::value;
+};
+
+template<typename TargetReceives, typename... Receivers>
+inline constexpr bool has_samethread_producer_v = has_samethread_producer<TargetReceives, Receivers...>::value;
+
+// Count external emitters that can produce events to a target receiver
+template<typename TargetReceives, typename... Items> struct count_external_producers;
+
+template<typename TargetReceives> struct count_external_producers<TargetReceives>
+{
+  static constexpr std::size_t value = 0;
+};
+
+template<typename TargetReceives, typename T, typename... Ts> struct count_external_producers<TargetReceives, T, Ts...>
+{
+  static constexpr bool is_external_producer =
+    is_external_emitter<T> && lists_overlap_v<get_emits_t<T>, TargetReceives>;
+  static constexpr std::size_t value =
+    (is_external_producer ? 1 : 0) + count_external_producers<TargetReceives, Ts...>::value;
+};
+
+template<typename TargetReceives, typename... Items>
+inline constexpr std::size_t count_external_producers_v = count_external_producers<TargetReceives, Items...>::value;
+
+// Check if any external emitter is registered
+template<typename... Items> struct has_external_emitters;
+
+template<> struct has_external_emitters<>
+{
+  static constexpr bool value = false;
+};
+
+template<typename T, typename... Ts> struct has_external_emitters<T, Ts...>
+{
+  static constexpr bool value = is_external_emitter<T> || has_external_emitters<Ts...>::value;
+};
+
+template<typename... Items> inline constexpr bool has_external_emitters_v = has_external_emitters<Items...>::value;
+
+// Total producer count for an OwnThread receiver
+// Event loop thread counts as 1 if any SameThread receiver emits to target
+// Each external emitter that can emit to target counts as 1
+template<typename TargetReceives, typename... Items>
+inline constexpr std::size_t total_producer_count_v =
+  (has_samethread_producer_v<TargetReceives, Items...> ? 1 : 0) + count_ownthread_producers_v<TargetReceives, Items...>
+  + count_external_producers_v<TargetReceives, Items...>;
 
 // =============================================================================
 // Poll strategies - use with loop.run<Strategy>() or Strategy{loop}.run()
@@ -1121,12 +1290,20 @@ template<typename... Receivers> class EventLoop
 {
 public:
   using self_type = EventLoop<Receivers...>;
+  using receiver_list = type_list<Receivers...>;
   using same_thread_events = collect_same_thread_events_t<Receivers...>;
   using tagged_event = to_tagged_event_t<same_thread_events>;
   using queue_type = DualQueue<tagged_event>;
 
   // Compile-time flag: true if any OwnThread receiver can emit to SameThread
   static constexpr bool has_remote_producers = has_remote_producers_v<same_thread_events, Receivers...>;
+
+  // Helper to compute producer count for a specific receiver
+  template<typename Receiver>
+  static constexpr std::size_t producer_count_for = total_producer_count_v<get_receives_t<Receiver>, Receivers...>;
+
+  // Helper to get the queue type used for an OwnThread receiver
+  template<typename Receiver> using queue_type_for = typename OwnThreadWrapper<Receiver, self_type>::queue_type;
 
   EventLoop() : receivers_(ReceiverStorage<Receivers, self_type>(this)...) {}
 
@@ -1146,8 +1323,10 @@ public:
   // Strategy accessors - use with Strategy{loop}.run()
   [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
 
+  // cppcheck-suppress functionStatic ; accesses queue_ member
   [[nodiscard]] queue_type& queue() & noexcept { return queue_; }
 
+  // cppcheck-suppress functionStatic ; accesses queue_ member
   [[nodiscard]] tagged_event* try_get_event()
   {
     if constexpr (has_remote_producers) {
@@ -1177,18 +1356,23 @@ public:
     return std::get<ReceiverStorage<Receiver, self_type>>(self.receivers_)->get();
   }
 
-  // Get an emitter handle for external code to inject events
-  [[nodiscard]] ExternalEmitter<self_type> get_external_emitter() noexcept { return ExternalEmitter<self_type>(this); }
+  // Get a typed external emitter handle - only available if EmitterType is registered
+  template<typename EmitterType>
+    requires(is_external_emitter<EmitterType> && contains_v<type_list<Receivers...>, EmitterType>)
+  [[nodiscard]] TypedExternalEmitter<EmitterType, self_type> get_external_emitter() noexcept
+  {
+    return TypedExternalEmitter<EmitterType, self_type>(this);
+  }
 
 private:
   friend class SameThreadDispatcher<self_type>;
   template<typename, typename> friend class OwnThreadDispatcher;
-  friend class ExternalEmitter<self_type>;
+  template<typename, typename> friend class TypedExternalEmitter;
 
   // Called by SameThreadDispatcher (uses local queue)
   template<typename Event> void queue_local(Event&& event) { queue_event<false>(std::forward<Event>(event)); }
 
-  // Called by OwnThreadDispatcher and ExternalEmitter (uses remote queue with synchronization)
+  // Called by OwnThreadDispatcher and TypedExternalEmitter (uses remote queue with synchronization)
   template<typename Event> void queue_remote(Event&& event) { queue_event<true>(std::forward<Event>(event)); }
 
   template<bool Remote, typename Event> void queue_event(Event&& event)
@@ -1214,15 +1398,19 @@ private:
     }
   }
 
-  template<std::size_t... Is> void start_all(std::index_sequence<Is...> /*unused*/)
+  template<std::size_t I> void start_one()
   {
-    (std::get<Is>(receivers_)->start(), ...);
+    if constexpr (is_receiver<std::tuple_element_t<I, std::tuple<Receivers...>>>) { std::get<I>(receivers_)->start(); }
   }
 
-  template<std::size_t... Is> void stop_all(std::index_sequence<Is...> /*unused*/)
+  template<std::size_t I> void stop_one()
   {
-    (std::get<Is>(receivers_)->stop(), ...);
+    if constexpr (is_receiver<std::tuple_element_t<I, std::tuple<Receivers...>>>) { std::get<I>(receivers_)->stop(); }
   }
+
+  template<std::size_t... Is> void start_all(std::index_sequence<Is...> /*unused*/) { (start_one<Is>(), ...); }
+
+  template<std::size_t... Is> void stop_all(std::index_sequence<Is...> /*unused*/) { (stop_one<Is>(), ...); }
 
   // Count same-thread receivers that handle Event starting from index I
   template<std::size_t I, typename Event> static consteval std::size_t count_same_thread_receivers()
@@ -1354,14 +1542,21 @@ private:
 
 // =============================================================================
 // External emitter - allows code outside the event loop to inject events
+// EmitterType specifies which events this emitter is allowed to emit
 // =============================================================================
 
-template<typename EventLoopType> class ExternalEmitter
+template<typename EmitterType, typename EventLoopType> class TypedExternalEmitter
 {
 public:
-  explicit ExternalEmitter(EventLoopType* loop) noexcept : event_loop_(loop) {}
+  explicit TypedExternalEmitter(EventLoopType* loop) noexcept : event_loop_(loop) {}
 
-  template<typename Event> void emit(Event&& event) { event_loop_->queue_remote(std::forward<Event>(event)); }
+  // Only allow emitting events declared in EmitterType::emits
+  template<typename Event>
+    requires can_emit<EmitterType, Event>
+  void emit(Event&& event)
+  {
+    event_loop_->queue_remote(std::forward<Event>(event));
+  }
 
 private:
   EventLoopType* event_loop_;
