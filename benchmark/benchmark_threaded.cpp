@@ -12,7 +12,7 @@ namespace {
 template<typename Count, typename Duration> auto events_per_second(Count event_count, Duration elapsed) -> long long
 {
   using seconds_double = std::chrono::duration<double>;
-  auto seconds = std::chrono::duration_cast<seconds_double>(elapsed).count();
+  const auto seconds = std::chrono::duration_cast<seconds_double>(elapsed).count();
   return static_cast<long long>(static_cast<double>(event_count) / seconds);
 }
 
@@ -169,15 +169,15 @@ void benchmark_ownthread_to_ownthread()
 
   loop.emit(Ping{ 0 });
 
-  auto started = steady_clock::now();
+  const auto started = steady_clock::now();
 
   while (counter.load(std::memory_order_relaxed) < kOwnThreadTargetCount) { std::this_thread::yield(); }
 
-  auto elapsed = steady_clock::now() - started;
+  const auto elapsed = steady_clock::now() - started;
 
   loop.stop();
 
-  auto final_count = counter.load();
+  const auto final_count = counter.load();
   std::println("  Events:     {}", final_count);
   std::println("  Time:       {} us", duration_cast<microseconds>(elapsed).count());
   std::println("  Throughput: {} events/sec\n", events_per_second(final_count, elapsed));
@@ -195,13 +195,13 @@ void benchmark_samethread_to_ownthread()
     Loop loop;
     loop.start();
     loop.emit(Ping{ 0 });
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
 
     ev_loop::Spin{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
     loop.stop();
-    auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
+    const auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
     std::println("  Spin:   {} events/sec", events_per_second(total, elapsed));
   }
 
@@ -210,13 +210,13 @@ void benchmark_samethread_to_ownthread()
     Loop loop;
     loop.start();
     loop.emit(Ping{ 0 });
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
 
     ev_loop::Yield{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
     loop.stop();
-    auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
+    const auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
     std::println("  Yield:  {} events/sec", events_per_second(total, elapsed));
   }
 
@@ -225,13 +225,13 @@ void benchmark_samethread_to_ownthread()
     Loop loop;
     loop.start();
     loop.emit(Ping{ 0 });
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
 
     ev_loop::Wait{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
     loop.stop();
-    auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
+    const auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
     std::println("  Wait:   {} events/sec\n", events_per_second(total, elapsed));
   }
 }
@@ -248,14 +248,14 @@ void benchmark_ownthread_to_samethread()
     Loop loop;
     loop.start();
     loop.emit(Pong{ 0 });
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
 
     ev_loop::Spin{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
     loop.stop();
-    auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
+    const auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
     std::println("  Spin:   {} events/sec", events_per_second(total, elapsed));
   }
 
@@ -264,14 +264,14 @@ void benchmark_ownthread_to_samethread()
     Loop loop;
     loop.start();
     loop.emit(Pong{ 0 });
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
 
     ev_loop::Yield{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
     loop.stop();
-    auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
+    const auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
     std::println("  Yield:  {} events/sec", events_per_second(total, elapsed));
   }
 
@@ -280,14 +280,14 @@ void benchmark_ownthread_to_samethread()
     Loop loop;
     loop.start();
     loop.emit(Pong{ 0 });
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
 
     ev_loop::Wait{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
     loop.stop();
-    auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
+    const auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
     std::println("  Wait:   {} events/sec\n", events_per_second(total, elapsed));
   }
 }

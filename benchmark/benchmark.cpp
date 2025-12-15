@@ -65,7 +65,7 @@ namespace {
 template<typename Count, typename Duration> auto events_per_second(Count event_count, Duration elapsed) -> long long
 {
   using seconds_double = std::chrono::duration<double>;
-  auto seconds = std::chrono::duration_cast<seconds_double>(elapsed).count();
+  const auto seconds = std::chrono::duration_cast<seconds_double>(elapsed).count();
   return static_cast<long long>(static_cast<double>(event_count) / seconds);
 }
 
@@ -86,9 +86,9 @@ int main()
     loop.emit(Ping{ 0 });
 
     ev_loop::Spin strategy{ loop };
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
     for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
 
     std::println("Spin::poll():   {} us ({} events/sec)",
       duration_cast<microseconds>(elapsed).count(),
@@ -104,9 +104,9 @@ int main()
     loop.emit(Ping{ 0 });
 
     ev_loop::Yield strategy{ loop };
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
     for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
 
     std::println("Yield::poll():  {} us ({} events/sec)",
       duration_cast<microseconds>(elapsed).count(),
@@ -122,9 +122,9 @@ int main()
     loop.emit(Ping{ 0 });
 
     ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
     for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
 
     std::println("Hybrid::poll(): {} us ({} events/sec)",
       duration_cast<microseconds>(elapsed).count(),
@@ -140,9 +140,9 @@ int main()
     loop.emit(Ping{ 0 });
 
     ev_loop::Wait strategy{ loop };
-    auto started = steady_clock::now();
+    const auto started = steady_clock::now();
     for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
-    auto elapsed = steady_clock::now() - started;
+    const auto elapsed = steady_clock::now() - started;
 
     std::println("Wait::poll():   {} us ({} events/sec)",
       duration_cast<microseconds>(elapsed).count(),
