@@ -91,3 +91,175 @@ TEST_CASE("Ref qualified functions are callable on lvalues", "[constexpr]")
   STATIC_REQUIRE(requires(ev_loop::TaggedEvent<int>& tagged) { tagged.index(); });
   STATIC_REQUIRE(requires(const ev_loop::TaggedEvent<int>& tagged) { tagged.index(); });
 }
+
+// =============================================================================
+// Queue selection tests - verify compile-time producer counting
+// =============================================================================
+
+namespace {
+
+struct EventA
+{
+};
+struct EventB
+{
+};
+struct EventC
+{
+};
+
+// SameThread receiver that emits EventB
+struct SameThreadProducerA
+{
+  using receives = ev_loop::type_list<EventA>;
+  using emits = ev_loop::type_list<EventB>;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  template<typename D> void on_event(EventA /*unused*/, D& /*unused*/) {}
+};
+
+// OwnThread receiver that receives EventB
+struct OwnThreadConsumerB
+{
+  using receives = ev_loop::type_list<EventB>;
+  using emits = ev_loop::type_list<>;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  template<typename D> void on_event(EventB /*unused*/, D& /*unused*/) {}
+};
+
+// OwnThread receiver that emits EventB (another producer)
+struct OwnThreadProducerB
+{
+  using receives = ev_loop::type_list<EventA>;
+  using emits = ev_loop::type_list<EventB>;
+  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  template<typename D> void on_event(EventA /*unused*/, D& /*unused*/) {}
+};
+
+// External emitter that emits EventB
+struct ExternalEmitterB
+{
+  using emits = ev_loop::type_list<EventB>;
+};
+
+// External emitter that emits EventC (not EventB)
+struct ExternalEmitterC
+{
+  using emits = ev_loop::type_list<EventC>;
+};
+
+} // namespace
+
+TEST_CASE("count_ownthread_producers_v counts OwnThread producers", "[constexpr][queue_selection]")
+{
+  using target_receives = ev_loop::type_list<EventB>;
+
+  // No producers
+  STATIC_REQUIRE(ev_loop::count_ownthread_producers_v<target_receives> == 0);
+
+  // SameThread doesn't count as OwnThread producer
+  STATIC_REQUIRE(ev_loop::count_ownthread_producers_v<target_receives, SameThreadProducerA> == 0);
+
+  // OwnThread consumer doesn't emit EventB
+  STATIC_REQUIRE(ev_loop::count_ownthread_producers_v<target_receives, OwnThreadConsumerB> == 0);
+
+  // OwnThread producer emits EventB
+  STATIC_REQUIRE(ev_loop::count_ownthread_producers_v<target_receives, OwnThreadProducerB> == 1);
+
+  // Multiple receivers
+  STATIC_REQUIRE(
+    ev_loop::count_ownthread_producers_v<target_receives, SameThreadProducerA, OwnThreadProducerB, OwnThreadConsumerB>
+    == 1);
+}
+
+TEST_CASE("has_samethread_producer_v detects SameThread producers", "[constexpr][queue_selection]")
+{
+  using target_receives = ev_loop::type_list<EventB>;
+
+  // No receivers
+  STATIC_REQUIRE_FALSE(ev_loop::has_samethread_producer_v<target_receives>);
+
+  // SameThread that emits to target
+  STATIC_REQUIRE(ev_loop::has_samethread_producer_v<target_receives, SameThreadProducerA>);
+
+  // OwnThread doesn't count as SameThread producer
+  STATIC_REQUIRE_FALSE(ev_loop::has_samethread_producer_v<target_receives, OwnThreadProducerB>);
+
+  // External emitter doesn't count as SameThread producer
+  STATIC_REQUIRE_FALSE(ev_loop::has_samethread_producer_v<target_receives, ExternalEmitterB>);
+
+  // Mixed - still true if any SameThread producer exists
+  STATIC_REQUIRE(
+    ev_loop::has_samethread_producer_v<target_receives, OwnThreadProducerB, SameThreadProducerA, OwnThreadConsumerB>);
+}
+
+TEST_CASE("count_external_producers_v counts external emitters", "[constexpr][queue_selection]")
+{
+  using target_receives = ev_loop::type_list<EventB>;
+
+  // No external emitters
+  STATIC_REQUIRE(ev_loop::count_external_producers_v<target_receives> == 0);
+
+  // External emitter that emits EventB
+  STATIC_REQUIRE(ev_loop::count_external_producers_v<target_receives, ExternalEmitterB> == 1);
+
+  // External emitter that doesn't emit EventB
+  STATIC_REQUIRE(ev_loop::count_external_producers_v<target_receives, ExternalEmitterC> == 0);
+
+  // Multiple external emitters
+  STATIC_REQUIRE(ev_loop::count_external_producers_v<target_receives, ExternalEmitterB, ExternalEmitterC> == 1);
+
+  // Mixed with receivers (external emitters still counted)
+  STATIC_REQUIRE(
+    ev_loop::count_external_producers_v<target_receives, SameThreadProducerA, ExternalEmitterB, OwnThreadConsumerB>
+    == 1);
+}
+
+TEST_CASE("total_producer_count_v sums all producer types", "[constexpr][queue_selection]")
+{
+  using target_receives = ev_loop::type_list<EventB>;
+
+  // No producers
+  STATIC_REQUIRE(ev_loop::total_producer_count_v<target_receives> == 0);
+
+  // Only SameThread producer (counts as 1)
+  STATIC_REQUIRE(ev_loop::total_producer_count_v<target_receives, SameThreadProducerA> == 1);
+
+  // Only OwnThread producer
+  STATIC_REQUIRE(ev_loop::total_producer_count_v<target_receives, OwnThreadProducerB> == 1);
+
+  // Only external emitter
+  STATIC_REQUIRE(ev_loop::total_producer_count_v<target_receives, ExternalEmitterB> == 1);
+
+  // SameThread + OwnThread = 2
+  STATIC_REQUIRE(ev_loop::total_producer_count_v<target_receives, SameThreadProducerA, OwnThreadProducerB> == 2);
+
+  // SameThread + external = 2
+  STATIC_REQUIRE(ev_loop::total_producer_count_v<target_receives, SameThreadProducerA, ExternalEmitterB> == 2);
+
+  // OwnThread + external = 2
+  STATIC_REQUIRE(ev_loop::total_producer_count_v<target_receives, OwnThreadProducerB, ExternalEmitterB> == 2);
+
+  // All three types = 3
+  STATIC_REQUIRE(
+    ev_loop::total_producer_count_v<target_receives, SameThreadProducerA, OwnThreadProducerB, ExternalEmitterB> == 3);
+}
+
+TEST_CASE("Queue type selection based on producer count", "[constexpr][queue_selection]")
+{
+  using ConsumerTaggedEvent = ev_loop::to_tagged_event_t<ev_loop::get_receives_t<OwnThreadConsumerB>>;
+
+  SECTION("Single external emitter selects SPSC queue")
+  {
+    using Loop = ev_loop::EventLoop<OwnThreadConsumerB, ExternalEmitterB>;
+    STATIC_REQUIRE(Loop::producer_count_for<OwnThreadConsumerB> == 1);
+    STATIC_REQUIRE(std::is_same_v<Loop::queue_type_for<OwnThreadConsumerB>, ev_loop::SPSCQueue<ConsumerTaggedEvent>>);
+  }
+
+  SECTION("SameThread + external selects MPSC queue")
+  {
+    using Loop = ev_loop::EventLoop<SameThreadProducerA, OwnThreadConsumerB, ExternalEmitterB>;
+    STATIC_REQUIRE(Loop::producer_count_for<OwnThreadConsumerB> == 2);
+    STATIC_REQUIRE(
+      std::is_same_v<Loop::queue_type_for<OwnThreadConsumerB>, ev_loop::ThreadSafeRingBuffer<ConsumerTaggedEvent>>);
+  }
+}
