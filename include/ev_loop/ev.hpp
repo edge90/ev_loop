@@ -85,7 +85,7 @@ template<std::size_t I, typename... Ts> using type_at_t = std::tuple_element_t<I
 // Tagged union (faster than std::variant)
 // =============================================================================
 
-template<std::size_t... Vs> constexpr std::size_t const_max()
+template<std::size_t... Vs> consteval std::size_t const_max()
 {
   std::size_t result = 0;
   ((result = Vs > result ? Vs : result), ...);
@@ -270,7 +270,7 @@ template<typename Tagged, typename Func, std::size_t... Is>
 // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
 constexpr void fast_dispatch_impl(Tagged& tagged, Func&& func, std::index_sequence<Is...> /*unused*/)
 {
-  bool dispatched = ((tagged.index() == Is ? (func(tagged.template get<Is>()), true) : false) || ...);
+  const bool dispatched = ((tagged.index() == Is ? (func(tagged.template get<Is>()), true) : false) || ...);
   if (!dispatched) [[unlikely]] { std::unreachable(); }
 }
 
@@ -407,8 +407,8 @@ template<typename T, std::size_t Capacity = 4096> class SPSCQueue
 public:
   bool push(T event)
   {
-    std::size_t head = head_.load(std::memory_order_acquire);
-    std::size_t tail = tail_.load(std::memory_order_relaxed);
+    const std::size_t head = head_.load(std::memory_order_acquire);
+    const std::size_t tail = tail_.load(std::memory_order_relaxed);
     if (tail - head >= Capacity) [[unlikely]] { return false; }
     buffer_[tail & mask_] = std::move(event);
     tail_.store(tail + 1, std::memory_order_release);
@@ -417,7 +417,7 @@ public:
 
   [[nodiscard]] T* try_pop()
   {
-    std::size_t head = head_.load(std::memory_order_relaxed);
+    const std::size_t head = head_.load(std::memory_order_relaxed);
     if (head == tail_.load(std::memory_order_acquire)) { return nullptr; }
     current_ = std::move(buffer_[head & mask_]);
     head_.store(head + 1, std::memory_order_release);
@@ -426,7 +426,7 @@ public:
 
   [[nodiscard]] T* pop_spin()
   {
-    std::size_t head = head_.load(std::memory_order_relaxed);
+    const std::size_t head = head_.load(std::memory_order_relaxed);
     std::size_t tail = tail_.load(std::memory_order_acquire);
     while (head == tail) {
       if (stop_.load(std::memory_order_relaxed)) { return nullptr; }
@@ -622,7 +622,7 @@ public:
     {
       std::unique_lock lock(mutex_);
       waiting_.store(true, std::memory_order_release);
-      bool signaled = cv_.wait_for(lock, timeout, [this] { return !remote_queue_.empty() || stop_; });
+      const bool signaled = cv_.wait_for(lock, timeout, [this] { return !remote_queue_.empty() || stop_; });
       waiting_.store(false, std::memory_order_release);
       if (signaled) {
         if (stop_ && remote_queue_.empty()) { return nullptr; }

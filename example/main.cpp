@@ -132,7 +132,6 @@ struct ChainHandler
 // =============================================================================
 
 namespace {
-constexpr int kMaxPollIterations = 100;
 constexpr int kThreadedReceiverDelayMs = 50;
 } // namespace
 
@@ -152,11 +151,11 @@ int main()
 
   // Process events
   ev_loop::Spin strategy{ loop };
-  for (int i = 0; i < kMaxPollIterations && strategy.poll(); ++i) {}
+  while (strategy.poll()) {}
 
   // Give threaded receiver time
   std::this_thread::sleep_for(std::chrono::milliseconds(kThreadedReceiverDelayMs));
-  for (int i = 0; i < kMaxPollIterations && strategy.poll(); ++i) {}
+  while (strategy.poll()) {}
 
   // Test 2: Chain events (demonstrates queue-based dispatch prevents recursion)
   std::println("\n--- Test 2: Chain events (queue prevents recursion) ---");
@@ -164,7 +163,7 @@ int main()
 
   // Each ChainEvent handler emits another ChainEvent via queue
   // Without queue dispatch, this would cause stack recursion
-  for (int i = 0; i < kMaxPollIterations && strategy.poll(); ++i) {}
+  while (strategy.poll()) {}
 
   loop.stop();
 
