@@ -1,7 +1,10 @@
+#include <atomic>
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cstddef>
 #include <ev_loop/ev.hpp>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "test_utils.hpp"
@@ -130,6 +133,31 @@ TEST_CASE("SPSCQueue full", "[spsc_queue]")
   REQUIRE(spsc_queue.try_pop() == nullptr);
 }
 
+TEST_CASE("SPSCQueue pop_spin returns nullptr on stop", "[spsc_queue]")
+{
+  ev_loop::SPSCQueue<int, kSmallQueueCapacity> spsc_queue;
+
+  std::atomic<bool> started{ false };
+  std::atomic<int*> result{ nullptr };
+
+  // Thread waits for data via pop_spin
+  std::thread consumer([&] {
+    started.store(true, std::memory_order_release);
+    result.store(spsc_queue.pop_spin(), std::memory_order_release);
+  });
+
+  // Wait for consumer to enter spin loop
+  while (!started.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+  // Stop the queue - should cause pop_spin to return nullptr
+  spsc_queue.stop();
+  consumer.join();
+
+  REQUIRE(result.load(std::memory_order_acquire) == nullptr);
+  REQUIRE(spsc_queue.is_stopped());
+}
+
 // =============================================================================
 // ThreadSafeRingBuffer Tests
 // =============================================================================
@@ -150,6 +178,31 @@ TEST_CASE("ThreadSafeRingBuffer full", "[thread_safe_ring_buffer]")
   REQUIRE(*thread_safe_buffer.try_pop() == 3);
   REQUIRE(*thread_safe_buffer.try_pop() == 4);
   REQUIRE(thread_safe_buffer.try_pop() == nullptr);
+}
+
+TEST_CASE("ThreadSafeRingBuffer pop_spin returns nullptr on stop", "[thread_safe_ring_buffer]")
+{
+  ev_loop::ThreadSafeRingBuffer<int, kSmallQueueCapacity> buffer;
+
+  std::atomic<bool> started{ false };
+  std::atomic<int*> result{ nullptr };
+
+  // Thread waits for data via pop_spin
+  std::thread consumer([&] {
+    started.store(true, std::memory_order_release);
+    result.store(buffer.pop_spin(), std::memory_order_release);
+  });
+
+  // Wait for consumer to enter spin/wait loop
+  while (!started.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+  // Stop the buffer - should cause pop_spin to return nullptr
+  buffer.stop();
+  consumer.join();
+
+  REQUIRE(result.load(std::memory_order_acquire) == nullptr);
+  REQUIRE(buffer.is_stopped());
 }
 
 TEST_CASE("ThreadSafeRingBuffer no memory leaks", "[thread_safe_ring_buffer]")
