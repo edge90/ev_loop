@@ -1103,8 +1103,10 @@ template<typename TargetReceives> struct has_samethread_producer<TargetReceives>
 
 template<typename TargetReceives, typename R, typename... Rs> struct has_samethread_producer<TargetReceives, R, Rs...>
 {
-  static constexpr bool is_samethread_producer =
-    get_thread_mode<R>() == ThreadMode::SameThread && lists_overlap_v<get_emits_t<R>, TargetReceives>;
+  // Only consider actual receivers (not external emitters) - external emitters are counted separately
+  static constexpr bool is_samethread_producer = !is_external_emitter<R>
+                                                 && get_thread_mode<R>() == ThreadMode::SameThread
+                                                 && lists_overlap_v<get_emits_t<R>, TargetReceives>;
   static constexpr bool value = is_samethread_producer || has_samethread_producer<TargetReceives, Rs...>::value;
 };
 
