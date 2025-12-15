@@ -391,7 +391,8 @@ struct TestExternalEmitter
 
 TEST_CASE("ExternalEmitter from another thread", "[event_loop][external_emitter]")
 {
-  ev_loop::EventLoop<ExternalThreadReceiver, TestExternalEmitter> loop;
+  // Use SharedEventLoopPtr when external emitters are needed
+  ev_loop::SharedEventLoopPtr<ExternalThreadReceiver, TestExternalEmitter> loop;
   loop.start();
 
   auto emitter = loop.get_external_emitter<TestExternalEmitter>();
@@ -412,6 +413,27 @@ TEST_CASE("ExternalEmitter from another thread", "[event_loop][external_emitter]
   constexpr int kExpectedSum = kEventCount * (kEventCount + 1) / 2;
   REQUIRE(loop.get<ExternalThreadReceiver>().count == kEventCount);
   REQUIRE(loop.get<ExternalThreadReceiver>().sum == kExpectedSum);
+}
+
+TEST_CASE("ExternalEmitter safe after SharedEventLoopPtr destruction", "[event_loop][external_emitter]")
+{
+  auto emitter = []() {
+    ev_loop::SharedEventLoopPtr<ExternalThreadReceiver, TestExternalEmitter> loop;
+    loop.start();
+    auto ext_emitter = loop.get_external_emitter<TestExternalEmitter>();
+    // Emitter should be valid while loop exists
+    REQUIRE(ext_emitter.is_valid());
+    REQUIRE(ext_emitter.emit(ExternalThreadEvent{ 1 }) == true);
+    // Wait for event to be processed
+    while (loop.get<ExternalThreadReceiver>().count < 1) { std::this_thread::yield(); }
+    loop.stop();
+    return ext_emitter;
+  }();
+
+  // Emitter should be invalid after loop is destroyed
+  REQUIRE(!emitter.is_valid());
+  // emit() should return false (not crash) when loop is gone
+  REQUIRE(emitter.emit(ExternalThreadEvent{ 2 }) == false);
 }
 
 // =============================================================================
