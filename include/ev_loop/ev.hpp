@@ -258,7 +258,7 @@ namespace detail {
       return *reinterpret_cast<T*>(self.storage.data());
     }
 
-    [[nodiscard]] std::size_t index() const noexcept { return tag; }
+    [[nodiscard]] constexpr std::size_t index() const noexcept { return tag; }
 
   private:
     void destroy()
@@ -370,7 +370,7 @@ namespace detail {
       if (size() >= Capacity) [[unlikely]] { return nullptr; }
       return &buffer_[tail_ & mask_];
     }
-    void commit_push() { ++tail_; }
+    void commit_push() noexcept { ++tail_; }
 
     [[nodiscard]] T* try_pop()
     {
@@ -378,8 +378,8 @@ namespace detail {
       return &buffer_[head_++ & mask_];
     }
 
-    [[nodiscard]] bool empty() const noexcept { return head_ == tail_; }
-    [[nodiscard]] std::size_t size() const noexcept { return tail_ - head_; }
+    [[nodiscard]] constexpr bool empty() const noexcept { return head_ == tail_; }
+    [[nodiscard]] constexpr std::size_t size() const noexcept { return tail_ - head_; }
 
   private:
     std::array<T, Capacity> buffer_{};
@@ -707,7 +707,7 @@ namespace detail {
     }
 
     // Pop from local queue only (no remote check) - for batch processing
-    [[nodiscard]] TaggedEventType* try_pop_local() { return local_queue_.try_pop(); }
+    [[nodiscard]] TaggedEventType* try_pop_local() noexcept { return local_queue_.try_pop(); }
 
     // Block until an event is available (no busy-wait)
     // 1. Check local queue (no sync)
@@ -818,8 +818,7 @@ namespace detail {
       receiver_.on_event(std::forward<Event>(event), dispatcher_);
     }
 
-    [[nodiscard]] Receiver& get() & noexcept { return receiver_; }
-    [[nodiscard]] const Receiver& get() const& noexcept { return receiver_; }
+    template<typename Self> [[nodiscard]] auto& get(this Self& self) noexcept { return self.receiver_; }
 
     // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
     void start() noexcept {}
@@ -884,8 +883,7 @@ namespace detail {
       queue_.notify(); // Wake up consumer
     }
 
-    [[nodiscard]] Receiver& get() & noexcept { return receiver_; }
-    [[nodiscard]] const Receiver& get() const& noexcept { return receiver_; }
+    template<typename Self> [[nodiscard]] auto& get(this Self& self) noexcept { return self.receiver_; }
 
     static constexpr ThreadMode mode = ThreadMode::OwnThread;
 
@@ -916,7 +914,7 @@ namespace detail {
   template<typename Emitter, typename EventLoopType> class ExternalEmitterWrapper
   {
   public:
-    explicit ExternalEmitterWrapper(EventLoopType* /*loop*/) {}
+    explicit ExternalEmitterWrapper(EventLoopType* /*loop*/) noexcept {}
   };
 
   // =============================================================================
@@ -962,10 +960,8 @@ namespace detail {
     ReceiverStorage(ReceiverStorage&&) noexcept = default;
     ReceiverStorage& operator=(ReceiverStorage&&) noexcept = default;
 
-    wrapper_type& operator*() & noexcept { return *wrapper_; }
-    const wrapper_type& operator*() const& noexcept { return *wrapper_; }
-    wrapper_type* operator->() & noexcept { return wrapper_.get(); }
-    const wrapper_type* operator->() const& noexcept { return wrapper_.get(); }
+    template<typename Self> auto& operator*(this Self& self) noexcept { return *self.wrapper_; }
+    template<typename Self> auto* operator->(this Self& self) noexcept { return self.wrapper_.get(); }
 
   private:
     std::unique_ptr<wrapper_type> wrapper_;
@@ -1058,7 +1054,7 @@ template<typename EventLoop> struct Spin
 {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
   EventLoop& event_loop;
-  explicit Spin(EventLoop& loop) : event_loop(loop) {}
+  explicit Spin(EventLoop& loop) noexcept : event_loop(loop) {}
 
   [[nodiscard]] bool poll()
   {
@@ -1085,7 +1081,7 @@ template<typename EventLoop> struct Wait
 {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
   EventLoop& event_loop;
-  explicit Wait(EventLoop& loop) : event_loop(loop) {}
+  explicit Wait(EventLoop& loop) noexcept : event_loop(loop) {}
 
   [[nodiscard]] bool poll()
   {
@@ -1112,7 +1108,7 @@ template<typename EventLoop> struct Yield
 {
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
   EventLoop& event_loop;
-  explicit Yield(EventLoop& loop) : event_loop(loop) {}
+  explicit Yield(EventLoop& loop) noexcept : event_loop(loop) {}
 
   [[nodiscard]] bool poll()
   {
@@ -1146,7 +1142,7 @@ template<typename EventLoop> struct Hybrid
   std::size_t empty_spins{ 0 };
 
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  explicit Hybrid(EventLoop& loop, std::size_t spins = 1000) : event_loop(loop), spin_count(spins) {}
+  explicit Hybrid(EventLoop& loop, std::size_t spins = 1000) noexcept : event_loop(loop), spin_count(spins) {}
 
   [[nodiscard]] bool poll()
   {
@@ -1419,7 +1415,7 @@ private:
 
   // ECS-style fanout: copy to first N-1, move to last
   template<typename Event, typename ReceiverList, std::size_t... Is>
-  void fanout_copy_n(Event& event, std::index_sequence<Is...> /*unused*/)
+  void fanout_copy_n(const Event& event, std::index_sequence<Is...> /*unused*/)
   {
     (std::get<detail::ReceiverStorage<detail::type_list_at_t<Is, ReceiverList>, self_type>>(receivers_)
         ->dispatch(event),
@@ -1451,7 +1447,7 @@ private:
 
   // ECS-style push: copy to first N-1, move to last
   template<typename Event, typename ReceiverList, std::size_t... Is>
-  void push_copy_n(Event& event, std::index_sequence<Is...> /*unused*/)
+  void push_copy_n(const Event& event, std::index_sequence<Is...> /*unused*/)
   {
     (std::get<detail::ReceiverStorage<detail::type_list_at_t<Is, ReceiverList>, self_type>>(receivers_)->push(event),
       ...);
@@ -1489,7 +1485,7 @@ template<typename EmitterType, typename EventLoopType> class SameThreadTypedDisp
   template<typename E> static constexpr bool to_threads = EventLoopType::template has_own_thread_receivers<E>();
 
 public:
-  explicit SameThreadTypedDispatcher(EventLoopType* loop) : event_loop_(loop) {}
+  explicit SameThreadTypedDispatcher(EventLoopType* loop) noexcept : event_loop_(loop) {}
 
   template<typename Event>
     requires detail::contains_v<detail::get_emits_t<EmitterType>, std::decay_t<Event>>
@@ -1517,7 +1513,7 @@ template<typename EmitterType, typename EventLoopType> class OwnThreadTypedDispa
   template<typename E> static constexpr bool to_threads = EventLoopType::template has_own_thread_receivers<E>();
 
 public:
-  explicit OwnThreadTypedDispatcher(EventLoopType* loop) : event_loop_(loop) {}
+  explicit OwnThreadTypedDispatcher(EventLoopType* loop) noexcept : event_loop_(loop) {}
 
   template<typename Event>
     requires detail::contains_v<detail::get_emits_t<EmitterType>, std::decay_t<Event>>
@@ -1604,10 +1600,11 @@ public:
   }
 
   // Access underlying loop for strategies (e.g., Spin{*shared_loop}.run())
-  [[nodiscard]] loop_type& operator*() noexcept { return *loop_; }
-  [[nodiscard]] const loop_type& operator*() const noexcept { return *loop_; }
-  [[nodiscard]] loop_type* operator->() noexcept { return loop_.get(); }
-  [[nodiscard]] const loop_type* operator->() const noexcept { return loop_.get(); }
+  // Ref-qualified to prevent dangling references from temporaries
+  [[nodiscard]] loop_type& operator*() & noexcept { return *loop_; }
+  [[nodiscard]] const loop_type& operator*() const& noexcept { return *loop_; }
+  [[nodiscard]] loop_type* operator->() & noexcept { return loop_.get(); }
+  [[nodiscard]] const loop_type* operator->() const& noexcept { return loop_.get(); }
 
   // Get a typed external emitter handle
   // The returned emitter uses weak_ptr and is safe to use after SharedEventLoopPtr is destroyed
