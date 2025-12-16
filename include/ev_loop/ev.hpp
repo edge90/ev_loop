@@ -312,7 +312,7 @@ template<typename Tagged, typename Func, std::size_t... Is>
 constexpr void fast_dispatch_impl(Tagged& tagged, Func&& func, std::index_sequence<Is...> /*unused*/)
 {
   const bool dispatched = ((tagged.index() == Is ? (func(tagged.template get<Is>()), true) : false) || ...);
-  if (!dispatched) [[unlikely]] { std::unreachable(); }
+  [[assume(dispatched)]];
 }
 
 template<typename... Events, typename Func> constexpr void fast_dispatch(TaggedEvent<Events...>& tagged, Func&& func)
@@ -522,7 +522,7 @@ public:
     std::size_t tail = tail_.load(std::memory_order_acquire);
     // LCOV_EXCL_START - spin loop iteration counts confuse coverage tools
     while (head == tail) {
-      if (stop_.load(std::memory_order_relaxed)) { return nullptr; }
+      if (stop_.load(std::memory_order_relaxed)) [[unlikely]] { return nullptr; }
       cpu_pause();
       tail = tail_.load(std::memory_order_acquire);
     }
@@ -615,7 +615,7 @@ public:
   {
     // LCOV_EXCL_START - spin loop iteration counts confuse coverage tools
     while (!has_data_.load(std::memory_order_acquire)) {
-      if (stop_.load(std::memory_order_acquire)) { return nullptr; }
+      if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return nullptr; }
       for (int i = 0; i < spin_pause_iterations; ++i) { cpu_pause(); }
     }
     // LCOV_EXCL_STOP
