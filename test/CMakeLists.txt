@@ -19,17 +19,20 @@ endif()
 
 include(${Catch2_SOURCE_DIR}/extras/Catch.cmake)
 
-add_executable(tests
-    tests.cpp
+# Unit tests (runtime only)
+add_executable(tests)
+target_sources(tests PRIVATE
     test_tagged_event.cpp
     test_queue.cpp
     test_event_loop.cpp
-    test_threaded.cpp
-    test_move_optimization.cpp
+    test_strategies.cpp
+    test_shared_event_loop_ptr.cpp
+    test_external_emitter.cpp
     test_builder.cpp
+    test_move_optimization.cpp
+    test_threaded.cpp
 )
-target_link_libraries(
-  tests
+target_link_libraries(tests
   PRIVATE ev_loop::ev_loop_warnings
           ev_loop::ev_loop_options
           ev_loop::ev_loop
@@ -43,66 +46,48 @@ if(WIN32 AND BUILD_SHARED_LIBS)
     COMMAND_EXPAND_LISTS)
 endif()
 
-# automatically discover tests that are defined in catch based test files you can modify the unittests. Set TEST_PREFIX
-# to whatever you want, or use different for different binaries
-catch_discover_tests(
-  tests
-  TEST_PREFIX
-  "unittests."
-  REPORTER
-  XML
-  OUTPUT_DIR
-  .
-  OUTPUT_PREFIX
-  "unittests."
-  OUTPUT_SUFFIX
-  .xml)
+catch_discover_tests(tests
+  TEST_PREFIX "unittests."
+  REPORTER XML
+  OUTPUT_DIR .
+  OUTPUT_PREFIX "unittests."
+  OUTPUT_SUFFIX .xml)
 
-# Add a file containing a set of constexpr tests
-add_executable(constexpr_tests constexpr_tests.cpp)
-target_link_libraries(
-  constexpr_tests
-  PRIVATE ev_loop::ev_loop_warnings
-          ev_loop::ev_loop_options
-          ev_loop::ev_loop
-          Catch2::Catch2WithMain)
+# Function to create a test executable with common configuration
+function(add_test_executable TARGET_NAME TEST_PREFIX)
+  add_executable(${TARGET_NAME})
+  target_sources(${TARGET_NAME} PRIVATE ${ARGN})
+  target_link_libraries(${TARGET_NAME}
+    PRIVATE ev_loop::ev_loop_warnings
+            ev_loop::ev_loop_options
+            ev_loop::ev_loop
+            Catch2::Catch2WithMain)
+  catch_discover_tests(${TARGET_NAME}
+    TEST_PREFIX "${TEST_PREFIX}."
+    REPORTER XML
+    OUTPUT_DIR .
+    OUTPUT_PREFIX "${TEST_PREFIX}."
+    OUTPUT_SUFFIX .xml)
+endfunction()
 
-catch_discover_tests(
-  constexpr_tests
-  TEST_PREFIX
-  "constexpr."
-  REPORTER
-  XML
-  OUTPUT_DIR
-  .
-  OUTPUT_PREFIX
-  "constexpr."
-  OUTPUT_SUFFIX
-  .xml)
+# Constexpr test sources
+set(CONSTEXPR_TEST_SOURCES
+    test_type_list_constexpr.cpp
+    test_tagged_event_constexpr.cpp
+    test_queue_constexpr.cpp
+    test_event_loop_constexpr.cpp
+    test_strategies_constexpr.cpp
+    test_shared_event_loop_ptr_constexpr.cpp
+    test_external_emitter_constexpr.cpp
+    test_builder_constexpr.cpp
+)
 
-# Disable the constexpr portion of the test, and build again this allows us to have an executable that we can debug when
-# things go wrong with the constexpr testing
-add_executable(relaxed_constexpr_tests constexpr_tests.cpp)
-target_link_libraries(
-  relaxed_constexpr_tests
-  PRIVATE ev_loop::ev_loop_warnings
-          ev_loop::ev_loop_options
-          ev_loop::ev_loop
-          Catch2::Catch2WithMain)
-target_compile_definitions(relaxed_constexpr_tests PRIVATE -DCATCH_CONFIG_RUNTIME_STATIC_REQUIRE)
+# Constexpr tests - STATIC_REQUIRE runs as compile-time static_assert
+add_test_executable(constexpr_tests "constexpr" ${CONSTEXPR_TEST_SOURCES})
 
-catch_discover_tests(
-  relaxed_constexpr_tests
-  TEST_PREFIX
-  "relaxed_constexpr."
-  REPORTER
-  XML
-  OUTPUT_DIR
-  .
-  OUTPUT_PREFIX
-  "relaxed_constexpr."
-  OUTPUT_SUFFIX
-  .xml)
+# Relaxed constexpr tests - STATIC_REQUIRE runs as runtime REQUIRE (for debugging)
+add_test_executable(relaxed_tests "relaxed" ${CONSTEXPR_TEST_SOURCES})
+target_compile_definitions(relaxed_tests PRIVATE CATCH_CONFIG_RUNTIME_STATIC_REQUIRE)
 
 # Compile-failure test: verifies that duplicate receivers trigger static_assert
 add_executable(test_builder_duplicate_fail EXCLUDE_FROM_ALL test_builder_duplicate_fail.cpp)

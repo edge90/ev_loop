@@ -1,9 +1,11 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <ev_loop/ev.hpp>
 #include <string>
 #include <utility>
 #include <vector>
+// NOLINTEND(misc-include-cleaner)
 
 namespace {
 constexpr int kPingPongLimit = 10;
@@ -39,7 +41,7 @@ struct PingReceiver
   using receives = ev_loop::type_list<PongEvent>;
   using emits = ev_loop::type_list<PingEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int received_count = 0;
   int last_value = 0;
@@ -57,7 +59,7 @@ struct PongReceiver
   using receives = ev_loop::type_list<PingEvent>;
   using emits = ev_loop::type_list<PongEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   int received_count = 0;
 
@@ -72,7 +74,7 @@ struct StringReceiver
 {
   using receives = ev_loop::type_list<StringEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
 
   std::vector<std::string> received;
 
@@ -177,7 +179,7 @@ struct FanoutReceiverA
 {
   using receives = ev_loop::type_list<FanoutEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
   template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
   {
@@ -189,7 +191,7 @@ struct FanoutReceiverB
 {
   using receives = ev_loop::type_list<FanoutEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
   template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
   {
@@ -201,7 +203,7 @@ struct FanoutReceiverC
 {
   using receives = ev_loop::type_list<FanoutEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
   std::vector<int> values;
   template<typename Dispatcher> void on_event(FanoutEvent event, Dispatcher& /*dispatcher*/)
   {

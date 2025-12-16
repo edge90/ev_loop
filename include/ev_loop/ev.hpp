@@ -24,6 +24,7 @@ namespace ev_loop {
 
 template<typename... Ts> struct type_list
 {
+  // cppcheck-suppress unusedStructMember
   static constexpr std::size_t size = sizeof...(Ts);
 };
 
@@ -107,6 +108,7 @@ namespace detail {
     template<std::size_t... Is> static consteval std::size_t find(std::index_sequence<Is...> /*unused*/)
     {
       std::size_t result = sizeof...(Ts); // Invalid index if not found
+      // cppcheck-suppress redundantInitialization
       // NOLINTNEXTLINE(readability-simplify-boolean-expr)
       (void)((std::is_same_v<T, Ts> ? (result = Is, true) : false) || ...);
       return result;
@@ -124,10 +126,12 @@ namespace detail {
   // Type-level search result (for fold-based searching)
   template<std::size_t N> struct found_at
   {
+    // cppcheck-suppress unusedStructMember
     static constexpr std::size_t value = N;
   };
   struct not_found
   {
+    // cppcheck-suppress unusedStructMember
     static constexpr std::size_t value = ~std::size_t{ 0 };
   };
 
@@ -201,8 +205,8 @@ namespace detail {
     {
       if (tag != uninitialized_tag) {
         move_construct_from(std::move(other));
-        other.destroy(); // cppcheck-suppress accessMoved ; other.destroy() only resets tag, the moved-from object is in
-                         // valid state
+        // cppcheck-suppress accessMoved ; destroy() only resets tag, safe on moved-from object
+        other.destroy();
       }
     }
 
@@ -225,8 +229,8 @@ namespace detail {
         tag = other.tag;
         if (tag != uninitialized_tag) {
           move_construct_from(std::move(other));
-          other.destroy(); // cppcheck-suppress accessMoved ; other.destroy() only resets tag, the moved-from object is
-                           // in valid state
+          // cppcheck-suppress accessMoved ; destroy() only resets tag, safe on moved-from object
+          other.destroy();
         }
       }
       return *this;
@@ -238,6 +242,7 @@ namespace detail {
       requires(contains_v<type_list<Events...>, std::decay_t<E>>)
     explicit TaggedEvent(E&& event) : tag(index_of_v<std::decay_t<E>, Events...>)
     {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
       std::construct_at(reinterpret_cast<std::decay_t<E>*>(storage.data()), std::forward<E>(event));
     }
 
@@ -246,6 +251,7 @@ namespace detail {
       destroy();
       using Decayed = std::decay_t<E>;
       tag = index_of_v<Decayed, Events...>;
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
       std::construct_at(reinterpret_cast<Decayed*>(storage.data()), std::forward<E>(event));
     }
 
@@ -271,6 +277,7 @@ namespace detail {
 
     template<std::size_t... Is> void destroy_at_index(std::index_sequence<Is...> /*unused*/)
     {
+      // cppcheck-suppress unreadVariable ; used by [[assume]]
       const bool dispatched = ((tag == Is ? (destroy_type<Is>(), true) : false) || ...);
       [[assume(dispatched)]];
     }
@@ -291,6 +298,7 @@ namespace detail {
 
     template<std::size_t... Is> void copy_at_index(const TaggedEvent& other, std::index_sequence<Is...> /*unused*/)
     {
+      // cppcheck-suppress unreadVariable ; used by [[assume]]
       const bool dispatched = ((tag == Is ? (copy_type<Is>(other), true) : false) || ...);
       [[assume(dispatched)]];
     }
@@ -309,6 +317,7 @@ namespace detail {
 
     template<std::size_t... Is> void move_at_index(TaggedEvent&& other, std::index_sequence<Is...> /*unused*/)
     {
+      // cppcheck-suppress unreadVariable ; used by [[assume]]
       const bool dispatched = ((tag == Is ? (move_type<Is>(std::move(other)), true) : false) || ...);
       [[assume(dispatched)]];
     }
@@ -337,6 +346,7 @@ namespace detail {
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
   constexpr void fast_dispatch_impl(Tagged& tagged, Func&& func, std::index_sequence<Is...> /*unused*/)
   {
+    // cppcheck-suppress unreadVariable ; used by [[assume]]
     const bool dispatched = ((tagged.index() == Is ? (func(tagged.template get<Is>()), true) : false) || ...);
     [[assume(dispatched)]];
   }
@@ -818,6 +828,7 @@ namespace detail {
       receiver_.on_event(std::forward<Event>(event), dispatcher_);
     }
 
+    // cppcheck-suppress functionStatic ; explicit object parameter functions cannot be static
     template<typename Self> [[nodiscard]] auto& get(this Self& self) noexcept { return self.receiver_; }
 
     // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
@@ -825,6 +836,7 @@ namespace detail {
     // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
     void stop() noexcept {}
 
+    // cppcheck-suppress unusedStructMember
     static constexpr ThreadMode mode = ThreadMode::SameThread;
 
   private:
@@ -883,8 +895,10 @@ namespace detail {
       queue_.notify(); // Wake up consumer
     }
 
+    // cppcheck-suppress functionStatic ; explicit object parameter functions cannot be static
     template<typename Self> [[nodiscard]] auto& get(this Self& self) noexcept { return self.receiver_; }
 
+    // cppcheck-suppress unusedStructMember
     static constexpr ThreadMode mode = ThreadMode::OwnThread;
 
   private:
@@ -1299,6 +1313,7 @@ private:
     static constexpr std::size_t num_receives = detail::type_list_size_v<receives>;
 
     // Fast path: single event - direct consteval count
+    // cppcheck-suppress unusedStructMember
     static constexpr std::size_t value =
       (num_receives == 1) ? count_producers_for_single_event<detail::type_list_at_t<0, receives>>() : 0;
   };
@@ -1328,10 +1343,8 @@ public:
   // Strategy accessors - use with Strategy{loop}.run()
   [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
 
-  // cppcheck-suppress functionStatic ; accesses queue_ member
   [[nodiscard]] queue_type& queue() & noexcept { return queue_; }
 
-  // cppcheck-suppress functionStatic ; accesses queue_ member
   [[nodiscard]] tagged_event* try_get_event()
   {
     if constexpr (needs_remote_queue) {
@@ -1440,6 +1453,7 @@ private:
   // Direct dispatch using consteval index lookup - avoids filter_list_t instantiation
   template<typename Event> void dispatch_single_direct(Event&& event)
   {
+    // cppcheck-suppress unreadVariable ; used by std::get
     constexpr std::size_t idx = find_st_receiver_index<std::decay_t<Event>>();
     // Use index-based std::get (O(1)) instead of type-based (O(N) template instantiation)
     std::get<idx>(receivers_)->dispatch(std::forward<Event>(event));
@@ -1626,8 +1640,7 @@ private:
 
 template<typename... Receivers> struct Builder
 {
-  // cppcheck-suppress functionStatic ; follows builder pattern convention
-  template<typename NewReceiver> constexpr auto add() const
+  template<typename NewReceiver> static constexpr auto add()
   {
     static_assert(
       !detail::contains_v<type_list<Receivers...>, NewReceiver>, "Receiver type is already registered in this Builder");
@@ -1635,8 +1648,7 @@ template<typename... Receivers> struct Builder
     return Builder<Receivers..., NewReceiver>{};
   }
 
-  // cppcheck-suppress functionStatic ; follows builder pattern convention
-  constexpr auto build() const { return EventLoop<Receivers...>{}; }
+  static constexpr auto build() { return EventLoop<Receivers...>{}; }
 
   using loop_type = EventLoop<Receivers...>;
 };

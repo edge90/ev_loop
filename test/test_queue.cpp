@@ -1,13 +1,18 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstddef>
 #include <ev_loop/ev.hpp>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
 
 #include "test_utils.hpp"
+// NOLINTEND(misc-include-cleaner)
+
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 
 namespace {
 constexpr std::size_t kSmallQueueCapacity = 4;
@@ -39,44 +44,45 @@ TEST_CASE("RingBuffer push pop", "[ring_buffer]")
   REQUIRE(ring_buffer.try_pop() == nullptr);
 }
 
-TEST_CASE("RingBuffer wraparound", "[ring_buffer]")
+TEST_CASE("RingBuffer with small capacity", "[ring_buffer]")
 {
   ev_loop::detail::RingBuffer<int, kSmallQueueCapacity> ring_buffer;
 
-  for (int round = 0; round < kWraparoundRounds; ++round) {
-    ring_buffer.push((round * kWraparoundRounds) + 1);
-    ring_buffer.push((round * kWraparoundRounds) + 2);
-    REQUIRE(*ring_buffer.try_pop() == (round * kWraparoundRounds) + 1);
-    REQUIRE(*ring_buffer.try_pop() == (round * kWraparoundRounds) + 2);
+  SECTION("wraparound")
+  {
+    for (int round = 0; round < kWraparoundRounds; ++round) {
+      ring_buffer.push((round * kWraparoundRounds) + 1);
+      ring_buffer.push((round * kWraparoundRounds) + 2);
+      REQUIRE(*ring_buffer.try_pop() == (round * kWraparoundRounds) + 1);
+      REQUIRE(*ring_buffer.try_pop() == (round * kWraparoundRounds) + 2);
+    }
   }
-}
 
-TEST_CASE("RingBuffer full", "[ring_buffer]")
-{
-  ev_loop::detail::RingBuffer<int, kSmallQueueCapacity> ring_buffer;
+  SECTION("full")
+  {
+    REQUIRE(ring_buffer.push(1));
+    REQUIRE(ring_buffer.push(2));
+    REQUIRE(ring_buffer.push(3));
+    REQUIRE(ring_buffer.push(4));
+    REQUIRE_FALSE(ring_buffer.push(5));
 
-  REQUIRE(ring_buffer.push(1));
-  REQUIRE(ring_buffer.push(2));
-  REQUIRE(ring_buffer.push(3));
-  REQUIRE(ring_buffer.push(4));
-  REQUIRE_FALSE(ring_buffer.push(5));
-
-  REQUIRE(ring_buffer.size() == kSmallQueueCapacity);
+    REQUIRE(ring_buffer.size() == kSmallQueueCapacity);
+  }
 }
 
 TEST_CASE("RingBuffer no memory leaks", "[ring_buffer]")
 {
-  reset_tracking();
+  auto counter = std::make_shared<TrackingCounter>();
   {
     ev_loop::detail::RingBuffer<ev_loop::detail::TaggedEvent<TrackedString>, kLargeQueueCapacity> ring_buffer;
 
     for (int idx = 0; idx < kMemoryTestIterations; ++idx) {
       ev_loop::detail::TaggedEvent<TrackedString> tagged_event;
-      tagged_event.store(TrackedString{ "item_" + std::to_string(idx) });
+      tagged_event.store(TrackedString{ counter, "item_" + std::to_string(idx) });
       if (ring_buffer.push(std::move(tagged_event))) { (void)ring_buffer.try_pop(); }
     }
   }
-  REQUIRE(constructed_count == destructed_count);
+  REQUIRE(counter->balanced());
 }
 
 // =============================================================================
@@ -100,123 +106,127 @@ TEST_CASE("spsc::Queue basic", "[spsc_queue]")
 
 TEST_CASE("spsc::Queue with TaggedEvent", "[spsc_queue]")
 {
-  reset_tracking();
+  auto counter = std::make_shared<TrackingCounter>();
   {
     ev_loop::detail::spsc::Queue<ev_loop::detail::TaggedEvent<TrackedString, int>, kMediumQueueCapacity> spsc_queue;
 
     ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event;
-    tagged_event.store(TrackedString{ "queued" });
+    tagged_event.store(TrackedString{ counter, "queued" });
     spsc_queue.push(std::move(tagged_event));
 
     auto* result = spsc_queue.try_pop();
     REQUIRE(result != nullptr);
     REQUIRE(result->get<0>().value == "queued");
   }
-  REQUIRE(constructed_count == destructed_count);
+  REQUIRE(counter->balanced());
 }
 
-TEST_CASE("spsc::Queue full", "[spsc_queue]")
+TEST_CASE("spsc::Queue with small capacity", "[spsc_queue]")
 {
   ev_loop::detail::spsc::Queue<int, kSmallQueueCapacity> spsc_queue;
 
-  REQUIRE(spsc_queue.push(1));
-  REQUIRE(spsc_queue.push(2));
-  REQUIRE(spsc_queue.push(3));
-  REQUIRE(spsc_queue.push(4));
-  REQUIRE_FALSE(spsc_queue.push(5));
+  SECTION("full")
+  {
+    REQUIRE(spsc_queue.push(1));
+    REQUIRE(spsc_queue.push(2));
+    REQUIRE(spsc_queue.push(3));
+    REQUIRE(spsc_queue.push(4));
+    REQUIRE_FALSE(spsc_queue.push(5));
 
-  // Verify data integrity
-  REQUIRE(*spsc_queue.try_pop() == 1);
-  REQUIRE(*spsc_queue.try_pop() == 2);
-  REQUIRE(*spsc_queue.try_pop() == 3);
-  REQUIRE(*spsc_queue.try_pop() == 4);
-  REQUIRE(spsc_queue.try_pop() == nullptr);
-}
+    // Verify data integrity
+    REQUIRE(*spsc_queue.try_pop() == 1);
+    REQUIRE(*spsc_queue.try_pop() == 2);
+    REQUIRE(*spsc_queue.try_pop() == 3);
+    REQUIRE(*spsc_queue.try_pop() == 4);
+    REQUIRE(spsc_queue.try_pop() == nullptr);
+  }
 
-TEST_CASE("spsc::Queue pop_spin returns nullptr on stop", "[spsc_queue]")
-{
-  ev_loop::detail::spsc::Queue<int, kSmallQueueCapacity> spsc_queue;
+  SECTION("pop_spin returns nullptr on stop")
+  {
+    std::atomic<bool> started{ false };
+    std::atomic<int*> result{ nullptr };
 
-  std::atomic<bool> started{ false };
-  std::atomic<int*> result{ nullptr };
+    // Thread waits for data via pop_spin
+    std::thread consumer([&] {
+      started.store(true, std::memory_order_release);
+      result.store(spsc_queue.pop_spin(), std::memory_order_release);
+    });
 
-  // Thread waits for data via pop_spin
-  std::thread consumer([&] {
-    started.store(true, std::memory_order_release);
-    result.store(spsc_queue.pop_spin(), std::memory_order_release);
-  });
+    // Wait for consumer to enter spin loop
+    while (!started.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-  // Wait for consumer to enter spin loop
-  while (!started.load(std::memory_order_acquire)) { std::this_thread::yield(); }
-  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // Stop the queue - should cause pop_spin to return nullptr
+    spsc_queue.stop();
+    consumer.join();
 
-  // Stop the queue - should cause pop_spin to return nullptr
-  spsc_queue.stop();
-  consumer.join();
-
-  REQUIRE(result.load(std::memory_order_acquire) == nullptr);
-  REQUIRE(spsc_queue.is_stopped());
+    REQUIRE(result.load(std::memory_order_acquire) == nullptr);
+    REQUIRE(spsc_queue.is_stopped());
+  }
 }
 
 // =============================================================================
 // mpsc::Queue Tests
 // =============================================================================
 
-TEST_CASE("mpsc::Queue full", "[mpsc_queue]")
+TEST_CASE("mpsc::Queue with small capacity", "[mpsc_queue]")
 {
-  ev_loop::detail::mpsc::Queue<int, kSmallQueueCapacity> thread_safe_buffer;
+  ev_loop::detail::mpsc::Queue<int, kSmallQueueCapacity> mpsc_queue;
 
-  REQUIRE(thread_safe_buffer.push(1));
-  REQUIRE(thread_safe_buffer.push(2));
-  REQUIRE(thread_safe_buffer.push(3));
-  REQUIRE(thread_safe_buffer.push(4));
-  REQUIRE_FALSE(thread_safe_buffer.push(5));
+  SECTION("full")
+  {
+    REQUIRE(mpsc_queue.push(1));
+    REQUIRE(mpsc_queue.push(2));
+    REQUIRE(mpsc_queue.push(3));
+    REQUIRE(mpsc_queue.push(4));
+    REQUIRE_FALSE(mpsc_queue.push(5));
 
-  // Verify data integrity
-  REQUIRE(*thread_safe_buffer.try_pop() == 1);
-  REQUIRE(*thread_safe_buffer.try_pop() == 2);
-  REQUIRE(*thread_safe_buffer.try_pop() == 3);
-  REQUIRE(*thread_safe_buffer.try_pop() == 4);
-  REQUIRE(thread_safe_buffer.try_pop() == nullptr);
-}
+    // Verify data integrity
+    REQUIRE(*mpsc_queue.try_pop() == 1);
+    REQUIRE(*mpsc_queue.try_pop() == 2);
+    REQUIRE(*mpsc_queue.try_pop() == 3);
+    REQUIRE(*mpsc_queue.try_pop() == 4);
+    REQUIRE(mpsc_queue.try_pop() == nullptr);
+  }
 
-TEST_CASE("mpsc::Queue pop_spin returns nullptr on stop", "[mpsc_queue]")
-{
-  ev_loop::detail::mpsc::Queue<int, kSmallQueueCapacity> buffer;
+  SECTION("pop_spin returns nullptr on stop")
+  {
+    std::atomic<bool> started{ false };
+    std::atomic<int*> result{ nullptr };
 
-  std::atomic<bool> started{ false };
-  std::atomic<int*> result{ nullptr };
+    // Thread waits for data via pop_spin
+    std::thread consumer([&] {
+      started.store(true, std::memory_order_release);
+      result.store(mpsc_queue.pop_spin(), std::memory_order_release);
+    });
 
-  // Thread waits for data via pop_spin
-  std::thread consumer([&] {
-    started.store(true, std::memory_order_release);
-    result.store(buffer.pop_spin(), std::memory_order_release);
-  });
+    // Wait for consumer to enter spin/wait loop
+    while (!started.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
-  // Wait for consumer to enter spin/wait loop
-  while (!started.load(std::memory_order_acquire)) { std::this_thread::yield(); }
-  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    // Stop the buffer - should cause pop_spin to return nullptr
+    mpsc_queue.stop();
+    consumer.join();
 
-  // Stop the buffer - should cause pop_spin to return nullptr
-  buffer.stop();
-  consumer.join();
-
-  REQUIRE(result.load(std::memory_order_acquire) == nullptr);
-  REQUIRE(buffer.is_stopped());
+    REQUIRE(result.load(std::memory_order_acquire) == nullptr);
+    REQUIRE(mpsc_queue.is_stopped());
+  }
 }
 
 TEST_CASE("mpsc::Queue no memory leaks", "[mpsc_queue]")
 {
-  reset_tracking();
+  auto counter = std::make_shared<TrackingCounter>();
   {
-    ev_loop::detail::mpsc::Queue<ev_loop::detail::TaggedEvent<TrackedString>, kLargeQueueCapacity> thread_safe_buffer;
+    ev_loop::detail::mpsc::Queue<ev_loop::detail::TaggedEvent<TrackedString>, kLargeQueueCapacity> mpsc_queue;
 
     for (int idx = 0; idx < kMemoryTestIterations; ++idx) {
       ev_loop::detail::TaggedEvent<TrackedString> tagged_event;
-      tagged_event.store(TrackedString{ "item_" + std::to_string(idx) });
-      thread_safe_buffer.push(std::move(tagged_event));
-      (void)thread_safe_buffer.try_pop();
+      tagged_event.store(TrackedString{ counter, "item_" + std::to_string(idx) });
+      mpsc_queue.push(std::move(tagged_event));
+      (void)mpsc_queue.try_pop();
     }
   }
-  REQUIRE(constructed_count == destructed_count);
+  REQUIRE(counter->balanced());
 }
+
+// NOLINTEND(readability-function-cognitive-complexity)
