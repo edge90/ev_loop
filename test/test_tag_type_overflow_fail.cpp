@@ -10,7 +10,6 @@ int main()
   // This should fail to compile with:
   // "Too many event types (max ~4 billion)"
   constexpr std::size_t overflow_value = std::numeric_limits<std::uint32_t>::max();
-  using tag = ev_loop::tag_type_t<overflow_value>;
-  static_cast<void>(sizeof(tag));
+  [[maybe_unused]] ev_loop::detail::tag_type_t<overflow_value> tag{};
   return 0;
 }

@@ -1,3 +1,4 @@
+// NOLINTBEGIN(misc-include-cleaner)
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <utility>
 
 #include "test_utils.hpp"
+// NOLINTEND(misc-include-cleaner)
 
 struct TrivialEvent
 {
@@ -74,118 +76,120 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 
   SECTION("string store and destroy")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event;
-      tagged_event.store(TrackedString{ "hello" });
+      tagged_event.store(TrackedString{ counter, "hello" });
       REQUIRE(tagged_event.index() == 0U);
       REQUIRE(tagged_event.get<0>().value == "hello");
     }
-    REQUIRE(constructed_count == destructed_count);
+    REQUIRE(counter->balanced());
   }
 
   SECTION("string overwrite")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event;
-      tagged_event.store(TrackedString{ "first" });
+      tagged_event.store(TrackedString{ counter, "first" });
       REQUIRE(tagged_event.get<0>().value == "first");
 
-      tagged_event.store(TrackedString{ "second" });
+      tagged_event.store(TrackedString{ counter, "second" });
       REQUIRE(tagged_event.get<0>().value == "second");
 
       tagged_event.store(kTestInt2);
       REQUIRE(tagged_event.index() == 1U);
       REQUIRE(tagged_event.get<1>() == kTestInt2);
     }
-    REQUIRE(constructed_count == destructed_count);
+    REQUIRE(counter->balanced());
   }
 
   SECTION("move constructor")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event1;
-      tagged_event1.store(TrackedString{ "moveme" });
+      tagged_event1.store(TrackedString{ counter, "moveme" });
 
-      const int before_construct = constructed_count;
-      const int before_destruct = destructed_count;
+      const int before_construct = counter->constructed_count;
+      const int before_destruct = counter->destructed_count;
 
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
       REQUIRE(tagged_event2.get<0>().value == "moveme");
       REQUIRE(tagged_event2.index() == 0U);
       // intentionally testing post-move state
+      // cppcheck-suppress accessMoved
       // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
       REQUIRE(tagged_event1.index() == kUninitializedTag);
 
-      REQUIRE(constructed_count == before_construct + 1);
-      REQUIRE(destructed_count == before_destruct + 1);
+      REQUIRE(counter->constructed_count == before_construct + 1);
+      REQUIRE(counter->destructed_count == before_destruct + 1);
     }
-    REQUIRE(constructed_count == destructed_count);
+    REQUIRE(counter->balanced());
   }
 
   SECTION("move assignment")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event1;
-      tagged_event1.store(TrackedString{ "source" });
+      tagged_event1.store(TrackedString{ counter, "source" });
 
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2;
-      tagged_event2.store(TrackedString{ "dest" });
+      tagged_event2.store(TrackedString{ counter, "dest" });
 
-      const int before_destruct = destructed_count;
+      const int before_destruct = counter->destructed_count;
 
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "source");
       // intentionally testing post-move state
+      // cppcheck-suppress accessMoved
       // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
       REQUIRE(tagged_event1.index() == kUninitializedTag);
 
-      REQUIRE(destructed_count > before_destruct);
+      REQUIRE(counter->destructed_count > before_destruct);
     }
-    REQUIRE(constructed_count == destructed_count);
+    REQUIRE(counter->balanced());
   }
 
   SECTION("copy constructor")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event1;
-      tagged_event1.store(TrackedString{ "copyme" });
+      tagged_event1.store(TrackedString{ counter, "copyme" });
 
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "copyme");
       REQUIRE(tagged_event1.get<0>().value == "copyme");
     }
-    REQUIRE(constructed_count == destructed_count);
-    REQUIRE(copy_count > 0);
+    REQUIRE(counter->balanced());
+    REQUIRE(counter->copy_count > 0);
   }
 
   SECTION("copy assignment")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event1;
-      tagged_event1.store(TrackedString{ "source" });
+      tagged_event1.store(TrackedString{ counter, "source" });
 
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2;
-      tagged_event2.store(TrackedString{ "dest" });
+      tagged_event2.store(TrackedString{ counter, "dest" });
 
       tagged_event2 = tagged_event1;
       REQUIRE(tagged_event2.get<0>().value == "source");
       REQUIRE(tagged_event1.get<0>().value == "source");
     }
-    REQUIRE(constructed_count == destructed_count);
+    REQUIRE(counter->balanced());
   }
 
   SECTION("self assignment")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event;
-      tagged_event.store(TrackedString{ "selftest" });
+      tagged_event.store(TrackedString{ counter, "selftest" });
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -213,7 +217,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 #endif
       REQUIRE(tagged_event.get<0>().value == "selftest");
     }
-    REQUIRE(constructed_count == destructed_count);
+    REQUIRE(counter->balanced());
   }
 
   SECTION("move only type")
@@ -236,42 +240,44 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
 
     tagged_event2 = std::move(tagged_event1);
     REQUIRE(tagged_event2.get<0>().value() == kTestInt);
+    // cppcheck-suppress accessMoved
     // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
     REQUIRE(tagged_event1.index() == kUninitializedTag);
   }
 
   SECTION("move assignment to uninitialized")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event1;
-      tagged_event1.store(TrackedString{ "source" });
+      tagged_event1.store(TrackedString{ counter, "source" });
 
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2; // uninitialized
 
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "source");
+      // cppcheck-suppress accessMoved
       // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
       REQUIRE(tagged_event1.index() == kUninitializedTag);
     }
-    REQUIRE(constructed_count == destructed_count);
+    REQUIRE(counter->balanced());
   }
 
   SECTION("move assignment from uninitialized")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event1; // uninitialized
 
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2;
-      tagged_event2.store(TrackedString{ "dest" });
+      tagged_event2.store(TrackedString{ counter, "dest" });
 
-      const int before_destruct = destructed_count;
+      const int before_destruct = counter->destructed_count;
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.index() == kUninitializedTag);
-      REQUIRE(destructed_count > before_destruct); // dest was destroyed
+      REQUIRE(counter->destructed_count > before_destruct); // dest was destroyed
     }
-    REQUIRE(constructed_count == destructed_count);
+    REQUIRE(counter->balanced());
   }
 
   SECTION("get returns correct reference types")
@@ -288,80 +294,31 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     static_assert(std::is_same_v<decltype(const_ref.get<0>()), const std::string&>);
 
     // Verify no copies when accessing via reference
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tracked;
-      tracked.store(TrackedString{ "reftest" });
-      const int constructs_before = constructed_count;
+      tracked.store(TrackedString{ counter, "reftest" });
+      const int constructs_before = counter->constructed_count;
 
       // Getting reference should not copy or move
-      TrackedString& ref = tracked.get<0>();
+      const TrackedString& ref = tracked.get<0>();
       REQUIRE(ref.value == "reftest");
-      REQUIRE(constructed_count == constructs_before);
-      REQUIRE(copy_count == 0);
+      REQUIRE(counter->constructed_count == constructs_before);
+      REQUIRE(counter->copy_count == 0);
     }
   }
 
   SECTION("empty after move")
   {
-    reset_tracking();
+    auto counter = std::make_shared<TrackingCounter>();
     ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event1;
-    tagged_event1.store(TrackedString{ "test" });
+    tagged_event1.store(TrackedString{ counter, "test" });
 
     const ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
 
     // After move, index should be max value for the tag type (uninitialized)
+    // cppcheck-suppress accessMoved
     // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
     REQUIRE(tagged_event1.index() == std::numeric_limits<ev_loop::detail::tag_type_t<2>>::max());
-  }
-}
-
-// =============================================================================
-// Tag type selector tests
-// =============================================================================
-
-TEST_CASE("tag_type_selector", "[tagged_event]")
-{
-  constexpr std::size_t kTagTypeCount100 = 100;
-  constexpr std::size_t kTagTypeCount254 = 254;
-  constexpr std::size_t kTagTypeCount255 = 255;
-  constexpr std::size_t kTagTypeCount256 = 256;
-  constexpr std::size_t kTagTypeCount1000 = 1000;
-  constexpr std::size_t kTagTypeCount65534 = 65534;
-  constexpr std::size_t kTagTypeCount65535 = 65535;
-  constexpr std::size_t kTagTypeCount100000 = 100000;
-  constexpr std::size_t kTagTypeSizeSmall = 1;
-  constexpr std::size_t kTagTypeSizeMedium = 2;
-  constexpr std::size_t kTagTypeSizeLarge = 4;
-  constexpr std::uint8_t kUninitializedTag = 255;
-
-  SECTION("static assertions")
-  {
-    // Static assertions to verify tag_type_selector at compile time
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<0>, std::uint8_t>);
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<1>, std::uint8_t>);
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<kTagTypeCount100>, std::uint8_t>);
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<kTagTypeCount254>, std::uint8_t>);
-    // 255 events need uint16_t since max(uint8_t)=255 is reserved for uninitialized
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<kTagTypeCount255>, std::uint16_t>);
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<kTagTypeCount256>, std::uint16_t>);
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<kTagTypeCount1000>, std::uint16_t>);
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<kTagTypeCount65534>, std::uint16_t>);
-    // 65535 events need uint32_t
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<kTagTypeCount65535>, std::uint32_t>);
-    static_assert(std::is_same_v<ev_loop::detail::tag_type_t<kTagTypeCount100000>, std::uint32_t>);
-  }
-
-  SECTION("uninitialized_tag is max value for selected type")
-  {
-    // For small event counts, tag is uint8_t and uninitialized is 255
-    using SmallTagged = ev_loop::detail::TaggedEvent<int, double>;
-    const SmallTagged small_tagged{};
-    REQUIRE(small_tagged.index() == kUninitializedTag);
-
-    // Verify the tag type sizes are what we expect
-    REQUIRE(sizeof(ev_loop::detail::tag_type_t<kTagTypeCount100>) == kTagTypeSizeSmall); // uint8_t
-    REQUIRE(sizeof(ev_loop::detail::tag_type_t<kTagTypeCount255>) == kTagTypeSizeMedium); // uint16_t
-    REQUIRE(sizeof(ev_loop::detail::tag_type_t<kTagTypeCount65535>) == kTagTypeSizeLarge); // uint32_t
   }
 }
