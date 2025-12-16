@@ -539,14 +539,15 @@ TEST_CASE("Two OwnThread producers to OwnThread consumer", "[event_loop][multi_p
   constexpr int kEventsPerProducer = 50;
 
   using Loop = ev_loop::EventLoop<ProducerA_OwnThread, ProducerB_OwnThread, MultiConsumer_OwnThread>;
-  using ConsumerTaggedEvent = ev_loop::to_tagged_event_t<ev_loop::get_receives_t<MultiConsumer_OwnThread>>;
+  using ConsumerTaggedEvent =
+    ev_loop::detail::to_tagged_event_t<ev_loop::detail::get_receives_t<MultiConsumer_OwnThread>>;
 
   // Verify MPSC queue is selected (producer_count > 1)
   static_assert(
     Loop::producer_count_for<MultiConsumer_OwnThread> == 2, "MultiConsumer should have 2 OwnThread producers");
   static_assert(
-    std::is_same_v<Loop::queue_type_for<MultiConsumer_OwnThread>, ev_loop::ThreadSafeRingBuffer<ConsumerTaggedEvent>>,
-    "Multi-producer should use ThreadSafeRingBuffer (MPSC)");
+    std::is_same_v<Loop::queue_type_for<MultiConsumer_OwnThread>, ev_loop::detail::mpsc::Queue<ConsumerTaggedEvent>>,
+    "Multi-producer should use mpsc::Queue");
 
   Loop loop;
   loop.start();
@@ -576,14 +577,15 @@ TEST_CASE("SameThread + OwnThread producers to OwnThread consumer", "[event_loop
   constexpr int kEventsPerProducer = 50;
 
   using Loop = ev_loop::EventLoop<SameThreadProducer, OwnThreadProducer, MultiConsumer_OwnThread>;
-  using ConsumerTaggedEvent = ev_loop::to_tagged_event_t<ev_loop::get_receives_t<MultiConsumer_OwnThread>>;
+  using ConsumerTaggedEvent =
+    ev_loop::detail::to_tagged_event_t<ev_loop::detail::get_receives_t<MultiConsumer_OwnThread>>;
 
   // Verify MPSC queue is selected (1 SameThread + 1 OwnThread = 2 producers)
   static_assert(Loop::producer_count_for<MultiConsumer_OwnThread> == 2,
     "MultiConsumer should have 2 producers (SameThread + OwnThread)");
   static_assert(
-    std::is_same_v<Loop::queue_type_for<MultiConsumer_OwnThread>, ev_loop::ThreadSafeRingBuffer<ConsumerTaggedEvent>>,
-    "Multi-producer should use ThreadSafeRingBuffer (MPSC)");
+    std::is_same_v<Loop::queue_type_for<MultiConsumer_OwnThread>, ev_loop::detail::mpsc::Queue<ConsumerTaggedEvent>>,
+    "Multi-producer should use mpsc::Queue");
 
   Loop loop;
   loop.start();
@@ -615,27 +617,30 @@ TEST_CASE("Single producer selects SPSC queue", "[event_loop][multi_producer]")
 {
   // Pure OwnThread ping-pong: each receiver has exactly 1 OwnThread producer
   using PingPongLoop = ev_loop::EventLoop<ThreadedPingReceiver, ThreadedPongReceiver>;
-  using PingTaggedEvent = ev_loop::to_tagged_event_t<ev_loop::get_receives_t<ThreadedPingReceiver>>;
-  using PongTaggedEvent = ev_loop::to_tagged_event_t<ev_loop::get_receives_t<ThreadedPongReceiver>>;
+  using PingTaggedEvent = ev_loop::detail::to_tagged_event_t<ev_loop::detail::get_receives_t<ThreadedPingReceiver>>;
+  using PongTaggedEvent = ev_loop::detail::to_tagged_event_t<ev_loop::detail::get_receives_t<ThreadedPongReceiver>>;
 
   static_assert(
     PingPongLoop::producer_count_for<ThreadedPingReceiver> == 1, "ThreadedPingReceiver should have 1 producer");
   static_assert(
     PingPongLoop::producer_count_for<ThreadedPongReceiver> == 1, "ThreadedPongReceiver should have 1 producer");
-  static_assert(std::is_same_v<PingPongLoop::queue_type_for<ThreadedPingReceiver>, ev_loop::SPSCQueue<PingTaggedEvent>>,
-    "Single-producer should use SPSCQueue");
-  static_assert(std::is_same_v<PingPongLoop::queue_type_for<ThreadedPongReceiver>, ev_loop::SPSCQueue<PongTaggedEvent>>,
-    "Single-producer should use SPSCQueue");
+  static_assert(
+    std::is_same_v<PingPongLoop::queue_type_for<ThreadedPingReceiver>, ev_loop::detail::spsc::Queue<PingTaggedEvent>>,
+    "Single-producer should use spsc::Queue");
+  static_assert(
+    std::is_same_v<PingPongLoop::queue_type_for<ThreadedPongReceiver>, ev_loop::detail::spsc::Queue<PongTaggedEvent>>,
+    "Single-producer should use spsc::Queue");
 
   // SameThread -> OwnThread: OwnThread has 1 producer (event loop thread)
   using MixedLoop = ev_loop::EventLoop<SameThreadProducer, MultiConsumer_OwnThread>;
-  using ConsumerTaggedEvent = ev_loop::to_tagged_event_t<ev_loop::get_receives_t<MultiConsumer_OwnThread>>;
+  using ConsumerTaggedEvent =
+    ev_loop::detail::to_tagged_event_t<ev_loop::detail::get_receives_t<MultiConsumer_OwnThread>>;
 
   static_assert(MixedLoop::producer_count_for<MultiConsumer_OwnThread> == 1,
     "MultiConsumer with only SameThread producer should have 1 producer");
-  static_assert(
-    std::is_same_v<MixedLoop::queue_type_for<MultiConsumer_OwnThread>, ev_loop::SPSCQueue<ConsumerTaggedEvent>>,
-    "Single-producer should use SPSCQueue");
+  static_assert(std::is_same_v<MixedLoop::queue_type_for<MultiConsumer_OwnThread>,
+                  ev_loop::detail::spsc::Queue<ConsumerTaggedEvent>>,
+    "Single-producer should use spsc::Queue");
 }
 
 // External emitter for producer count test
@@ -648,13 +653,13 @@ TEST_CASE("External emitter counts as producer", "[event_loop][multi_producer]")
 {
   // Without external emitter: single producer (SameThread) -> SPSC
   using LoopWithoutExternal = ev_loop::EventLoop<SameThreadProducer, MultiConsumer_OwnThread>;
-  using TaggedEvent = ev_loop::to_tagged_event_t<ev_loop::get_receives_t<MultiConsumer_OwnThread>>;
+  using TaggedEvent = ev_loop::detail::to_tagged_event_t<ev_loop::detail::get_receives_t<MultiConsumer_OwnThread>>;
 
   static_assert(LoopWithoutExternal::producer_count_for<MultiConsumer_OwnThread> == 1,
     "Without external emitter should have 1 producer");
-  static_assert(
-    std::is_same_v<LoopWithoutExternal::queue_type_for<MultiConsumer_OwnThread>, ev_loop::SPSCQueue<TaggedEvent>>,
-    "Single-producer should use SPSCQueue");
+  static_assert(std::is_same_v<LoopWithoutExternal::queue_type_for<MultiConsumer_OwnThread>,
+                  ev_loop::detail::spsc::Queue<TaggedEvent>>,
+    "Single-producer should use spsc::Queue");
 
   // With external emitter: 2 producers (SameThread + External) -> MPSC
   using LoopWithExternal = ev_loop::EventLoop<SameThreadProducer, MultiConsumer_OwnThread, ExternalMultiProdEmitter>;
@@ -662,6 +667,6 @@ TEST_CASE("External emitter counts as producer", "[event_loop][multi_producer]")
   static_assert(LoopWithExternal::producer_count_for<MultiConsumer_OwnThread> == 2,
     "With external emitter should have 2 producers");
   static_assert(std::is_same_v<LoopWithExternal::queue_type_for<MultiConsumer_OwnThread>,
-                  ev_loop::ThreadSafeRingBuffer<TaggedEvent>>,
-    "Multi-producer (with external) should use ThreadSafeRingBuffer");
+                  ev_loop::detail::mpsc::Queue<TaggedEvent>>,
+    "Multi-producer (with external) should use mpsc::Queue");
 }
