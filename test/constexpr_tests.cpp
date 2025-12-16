@@ -104,9 +104,6 @@ struct EventA
 struct EventB
 {
 };
-struct EventC
-{
-};
 
 // SameThread receiver that emits EventB
 struct SameThreadProducerA
@@ -126,25 +123,10 @@ struct OwnThreadConsumerB
   template<typename D> void on_event(EventB /*unused*/, D& /*unused*/) {}
 };
 
-// OwnThread receiver that emits EventB (another producer)
-struct OwnThreadProducerB
-{
-  using receives = ev_loop::type_list<EventA>;
-  using emits = ev_loop::type_list<EventB>;
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
-  template<typename D> void on_event(EventA /*unused*/, D& /*unused*/) {}
-};
-
 // External emitter that emits EventB
 struct ExternalEmitterB
 {
   using emits = ev_loop::type_list<EventB>;
-};
-
-// External emitter that emits EventC (not EventB)
-struct ExternalEmitterC
-{
-  using emits = ev_loop::type_list<EventC>;
 };
 
 } // namespace
