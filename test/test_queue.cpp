@@ -23,7 +23,7 @@ constexpr int kMemoryTestIterations = 100;
 
 TEST_CASE("RingBuffer push pop", "[ring_buffer]")
 {
-  ev_loop::RingBuffer<int, kMediumQueueCapacity> ring_buffer;
+  ev_loop::detail::RingBuffer<int, kMediumQueueCapacity> ring_buffer;
   REQUIRE(ring_buffer.empty());
 
   ring_buffer.push(1);
@@ -41,7 +41,7 @@ TEST_CASE("RingBuffer push pop", "[ring_buffer]")
 
 TEST_CASE("RingBuffer wraparound", "[ring_buffer]")
 {
-  ev_loop::RingBuffer<int, kSmallQueueCapacity> ring_buffer;
+  ev_loop::detail::RingBuffer<int, kSmallQueueCapacity> ring_buffer;
 
   for (int round = 0; round < kWraparoundRounds; ++round) {
     ring_buffer.push((round * kWraparoundRounds) + 1);
@@ -53,7 +53,7 @@ TEST_CASE("RingBuffer wraparound", "[ring_buffer]")
 
 TEST_CASE("RingBuffer full", "[ring_buffer]")
 {
-  ev_loop::RingBuffer<int, kSmallQueueCapacity> ring_buffer;
+  ev_loop::detail::RingBuffer<int, kSmallQueueCapacity> ring_buffer;
 
   REQUIRE(ring_buffer.push(1));
   REQUIRE(ring_buffer.push(2));
@@ -68,10 +68,10 @@ TEST_CASE("RingBuffer no memory leaks", "[ring_buffer]")
 {
   reset_tracking();
   {
-    ev_loop::RingBuffer<ev_loop::TaggedEvent<TrackedString>, kLargeQueueCapacity> ring_buffer;
+    ev_loop::detail::RingBuffer<ev_loop::detail::TaggedEvent<TrackedString>, kLargeQueueCapacity> ring_buffer;
 
     for (int idx = 0; idx < kMemoryTestIterations; ++idx) {
-      ev_loop::TaggedEvent<TrackedString> tagged_event;
+      ev_loop::detail::TaggedEvent<TrackedString> tagged_event;
       tagged_event.store(TrackedString{ "item_" + std::to_string(idx) });
       if (ring_buffer.push(std::move(tagged_event))) { (void)ring_buffer.try_pop(); }
     }
@@ -80,15 +80,15 @@ TEST_CASE("RingBuffer no memory leaks", "[ring_buffer]")
 }
 
 // =============================================================================
-// SPSCQueue Tests
+// spsc::Queue Tests
 // =============================================================================
 
-TEST_CASE("SPSCQueue basic", "[spsc_queue]")
+TEST_CASE("spsc::Queue basic", "[spsc_queue]")
 {
   constexpr int kTestValue1 = 10;
   constexpr int kTestValue2 = 20;
 
-  ev_loop::SPSCQueue<int, kMediumQueueCapacity> spsc_queue;
+  ev_loop::detail::spsc::Queue<int, kMediumQueueCapacity> spsc_queue;
 
   spsc_queue.push(kTestValue1);
   spsc_queue.push(kTestValue2);
@@ -98,13 +98,13 @@ TEST_CASE("SPSCQueue basic", "[spsc_queue]")
   REQUIRE(spsc_queue.try_pop() == nullptr);
 }
 
-TEST_CASE("SPSCQueue with TaggedEvent", "[spsc_queue]")
+TEST_CASE("spsc::Queue with TaggedEvent", "[spsc_queue]")
 {
   reset_tracking();
   {
-    ev_loop::SPSCQueue<ev_loop::TaggedEvent<TrackedString, int>, kMediumQueueCapacity> spsc_queue;
+    ev_loop::detail::spsc::Queue<ev_loop::detail::TaggedEvent<TrackedString, int>, kMediumQueueCapacity> spsc_queue;
 
-    ev_loop::TaggedEvent<TrackedString, int> tagged_event;
+    ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event;
     tagged_event.store(TrackedString{ "queued" });
     spsc_queue.push(std::move(tagged_event));
 
@@ -115,9 +115,9 @@ TEST_CASE("SPSCQueue with TaggedEvent", "[spsc_queue]")
   REQUIRE(constructed_count == destructed_count);
 }
 
-TEST_CASE("SPSCQueue full", "[spsc_queue]")
+TEST_CASE("spsc::Queue full", "[spsc_queue]")
 {
-  ev_loop::SPSCQueue<int, kSmallQueueCapacity> spsc_queue;
+  ev_loop::detail::spsc::Queue<int, kSmallQueueCapacity> spsc_queue;
 
   REQUIRE(spsc_queue.push(1));
   REQUIRE(spsc_queue.push(2));
@@ -133,9 +133,9 @@ TEST_CASE("SPSCQueue full", "[spsc_queue]")
   REQUIRE(spsc_queue.try_pop() == nullptr);
 }
 
-TEST_CASE("SPSCQueue pop_spin returns nullptr on stop", "[spsc_queue]")
+TEST_CASE("spsc::Queue pop_spin returns nullptr on stop", "[spsc_queue]")
 {
-  ev_loop::SPSCQueue<int, kSmallQueueCapacity> spsc_queue;
+  ev_loop::detail::spsc::Queue<int, kSmallQueueCapacity> spsc_queue;
 
   std::atomic<bool> started{ false };
   std::atomic<int*> result{ nullptr };
@@ -159,12 +159,12 @@ TEST_CASE("SPSCQueue pop_spin returns nullptr on stop", "[spsc_queue]")
 }
 
 // =============================================================================
-// ThreadSafeRingBuffer Tests
+// mpsc::Queue Tests
 // =============================================================================
 
-TEST_CASE("ThreadSafeRingBuffer full", "[thread_safe_ring_buffer]")
+TEST_CASE("mpsc::Queue full", "[mpsc_queue]")
 {
-  ev_loop::ThreadSafeRingBuffer<int, kSmallQueueCapacity> thread_safe_buffer;
+  ev_loop::detail::mpsc::Queue<int, kSmallQueueCapacity> thread_safe_buffer;
 
   REQUIRE(thread_safe_buffer.push(1));
   REQUIRE(thread_safe_buffer.push(2));
@@ -180,9 +180,9 @@ TEST_CASE("ThreadSafeRingBuffer full", "[thread_safe_ring_buffer]")
   REQUIRE(thread_safe_buffer.try_pop() == nullptr);
 }
 
-TEST_CASE("ThreadSafeRingBuffer pop_spin returns nullptr on stop", "[thread_safe_ring_buffer]")
+TEST_CASE("mpsc::Queue pop_spin returns nullptr on stop", "[mpsc_queue]")
 {
-  ev_loop::ThreadSafeRingBuffer<int, kSmallQueueCapacity> buffer;
+  ev_loop::detail::mpsc::Queue<int, kSmallQueueCapacity> buffer;
 
   std::atomic<bool> started{ false };
   std::atomic<int*> result{ nullptr };
@@ -205,14 +205,14 @@ TEST_CASE("ThreadSafeRingBuffer pop_spin returns nullptr on stop", "[thread_safe
   REQUIRE(buffer.is_stopped());
 }
 
-TEST_CASE("ThreadSafeRingBuffer no memory leaks", "[thread_safe_ring_buffer]")
+TEST_CASE("mpsc::Queue no memory leaks", "[mpsc_queue]")
 {
   reset_tracking();
   {
-    ev_loop::ThreadSafeRingBuffer<ev_loop::TaggedEvent<TrackedString>, kLargeQueueCapacity> thread_safe_buffer;
+    ev_loop::detail::mpsc::Queue<ev_loop::detail::TaggedEvent<TrackedString>, kLargeQueueCapacity> thread_safe_buffer;
 
     for (int idx = 0; idx < kMemoryTestIterations; ++idx) {
-      ev_loop::TaggedEvent<TrackedString> tagged_event;
+      ev_loop::detail::TaggedEvent<TrackedString> tagged_event;
       tagged_event.store(TrackedString{ "item_" + std::to_string(idx) });
       thread_safe_buffer.push(std::move(tagged_event));
       (void)thread_safe_buffer.try_pop();
