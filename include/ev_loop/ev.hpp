@@ -544,6 +544,8 @@ namespace detail {
         if (tail - head >= Capacity) [[unlikely]] { return false; }
         buffer_[tail & mask_] = std::move(event);
         tail_.store(tail + 1, std::memory_order_release);
+        signal_.fetch_add(1, std::memory_order_release);
+        signal_.notify_one();
         return true;
       }
 
@@ -572,10 +574,41 @@ namespace detail {
         return &current_;
       }
 
+      [[nodiscard]] T* pop_wait()
+      {
+        constexpr int spin_iterations = 1000;
+        while (true) {
+          // Spin phase - fast path under load
+          for (int i = 0; i < spin_iterations; ++i) {
+            if (stop_.load(std::memory_order_relaxed)) [[unlikely]] { return nullptr; }
+            const std::size_t head = head_.load(std::memory_order_relaxed);
+            const std::size_t tail = tail_.load(std::memory_order_acquire);
+            if (head != tail) {
+              current_ = std::move(buffer_[head & mask_]);
+              head_.store(head + 1, std::memory_order_release);
+              return &current_;
+            }
+            cpu_pause();
+          }
+          // Wait phase - save CPU when idle
+          if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return nullptr; }
+          const auto sig = signal_.load(std::memory_order_acquire);
+          const std::size_t head = head_.load(std::memory_order_relaxed);
+          const std::size_t tail = tail_.load(std::memory_order_acquire);
+          if (head != tail) { continue; } // Data arrived during check
+          signal_.wait(sig, std::memory_order_acquire);
+        }
+      }
+
       // cppcheck-suppress functionStatic ; interface consistency with mpsc::Queue
       void notify() { /* No-op for lock-free */ }
 
-      void stop() { stop_.store(true, std::memory_order_release); }
+      void stop()
+      {
+        stop_.store(true, std::memory_order_release);
+        signal_.fetch_add(1, std::memory_order_release);
+        signal_.notify_all();
+      }
 
       [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
 
@@ -589,6 +622,7 @@ namespace detail {
       alignas(cache_line_size) T current_{};
       alignas(cache_line_size) std::atomic<std::size_t> head_{ 0 };
       alignas(cache_line_size) std::atomic<std::size_t> tail_{ 0 };
+      alignas(cache_line_size) std::atomic<std::size_t> signal_{ 0 };
       alignas(cache_line_size) std::atomic<bool> stop_{ false };
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -615,10 +649,13 @@ namespace detail {
     public:
       bool push(T event)
       {
-        std::scoped_lock lock(mutex_);
-        if (tail_ - head_ >= Capacity) [[unlikely]] { return false; }
-        buffer_[tail_++ & mask_] = std::move(event);
-        has_data_.store(true, std::memory_order_release);
+        {
+          std::scoped_lock lock(mutex_);
+          if (tail_ - head_ >= Capacity) [[unlikely]] { return false; }
+          buffer_[tail_++ & mask_] = std::move(event);
+          has_data_.store(true, std::memory_order_release);
+        }
+        cv_.notify_one();
         return true;
       }
 
@@ -665,6 +702,31 @@ namespace detail {
         // LCOV_EXCL_STOP
         std::scoped_lock lock(mutex_);
         if (head_ == tail_) { return nullptr; }
+        current_ = std::move(buffer_[head_++ & mask_]);
+        if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
+        return &current_;
+      }
+
+      [[nodiscard]] T* pop_wait()
+      {
+        constexpr int spin_iterations = 1000;
+        // Spin phase - fast path under load
+        for (int i = 0; i < spin_iterations; ++i) {
+          if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return nullptr; }
+          if (has_data_.load(std::memory_order_acquire)) {
+            std::scoped_lock lock(mutex_);
+            if (head_ != tail_) {
+              current_ = std::move(buffer_[head_++ & mask_]);
+              if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
+              return &current_;
+            }
+          }
+          cpu_pause();
+        }
+        // Wait phase - save CPU when idle
+        std::unique_lock lock(mutex_);
+        cv_.wait(lock, [this] { return head_ != tail_ || stop_; });
+        if (stop_ && head_ == tail_) { return nullptr; }
         current_ = std::move(buffer_[head_++ & mask_]);
         if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
         return &current_;
@@ -918,7 +980,7 @@ namespace detail {
     {
       dispatcher_type dispatcher(ev_);
       while (running_.load(std::memory_order_relaxed)) {
-        auto* result = queue_.pop_spin();
+        auto* result = queue_.pop_wait();
         if (result) {
           fast_dispatch(
             *result, [this, &dispatcher](auto& event) { receiver_.on_event(std::move(event), dispatcher); });
