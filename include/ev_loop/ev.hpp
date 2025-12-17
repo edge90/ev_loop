@@ -28,9 +28,13 @@ template<typename... Ts> struct type_list
   static constexpr std::size_t size = sizeof...(Ts);
 };
 
-enum class ThreadMode : std::uint8_t {
-  SameThread, // Runs on event loop thread, uses queue dispatch
-  OwnThread // Runs on its own thread, direct push from emitters
+// Tag types for thread mode specification via type alias
+// Usage: using thread_mode = ev_loop::SameThread;
+struct SameThread
+{
+};
+struct OwnThread
+{
 };
 
 // =============================================================================
@@ -341,7 +345,7 @@ namespace detail {
 
   template<typename List> using to_tagged_event_t = typename to_tagged_event<List>::type;
 
-  // Fast tagged event dispatch
+  // Fast tagged event dispatch using fold expression
   template<typename Tagged, typename Func, std::size_t... Is>
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
   constexpr void fast_dispatch_impl(Tagged& tagged, Func&& func, std::index_sequence<Is...> /*unused*/)
@@ -408,9 +412,29 @@ namespace detail {
   concept has_emits = requires { typename T::emits; };
 
   template<typename T>
-  concept has_thread_mode = requires {
-    { T::thread_mode } -> std::convertible_to<ThreadMode>;
+  concept has_thread_mode = requires { typename T::thread_mode; };
+
+  // Thread mode type traits - check if type uses SameThread or OwnThread
+  // Use struct specialization to avoid accessing T::thread_mode when it doesn't exist
+  template<typename T, bool HasMode = has_thread_mode<T>> struct is_same_thread : std::true_type
+  {
   };
+
+  template<typename T> struct is_same_thread<T, true> : std::is_same<typename T::thread_mode, SameThread>
+  {
+  };
+
+  template<typename T> inline constexpr bool is_same_thread_v = is_same_thread<T>::value;
+
+  template<typename T, bool HasMode = has_thread_mode<T>> struct is_own_thread : std::false_type
+  {
+  };
+
+  template<typename T> struct is_own_thread<T, true> : std::is_same<typename T::thread_mode, OwnThread>
+  {
+  };
+
+  template<typename T> inline constexpr bool is_own_thread_v = is_own_thread<T>::value;
 
   // Get receives type list, defaults to empty
   template<typename T> struct get_receives
@@ -438,16 +462,6 @@ namespace detail {
 
   template<typename T> using get_emits_t = typename get_emits<T>::type;
 
-  // Get thread mode, defaults to SameThread
-  template<typename T> consteval ThreadMode get_thread_mode()
-  {
-    if constexpr (has_thread_mode<T>) {
-      return T::thread_mode;
-    } else {
-      return ThreadMode::SameThread;
-    }
-  }
-
   // Check if receiver can handle event type
   template<typename Receiver, typename Event>
   concept can_receive = contains_v<get_receives_t<Receiver>, std::decay_t<Event>>;
@@ -469,17 +483,14 @@ namespace detail {
   template<typename Event> struct same_thread_receiver_for
   {
     template<typename R>
-    struct pred
-      : std::bool_constant<is_receiver<R> && get_thread_mode<R>() == ThreadMode::SameThread && can_receive<R, Event>>
+    struct pred : std::bool_constant<is_receiver<R> && is_same_thread_v<R> && can_receive<R, Event>>
     {
     };
   };
 
   template<typename Event> struct own_thread_receiver_for
   {
-    template<typename R>
-    struct pred
-      : std::bool_constant<is_receiver<R> && get_thread_mode<R>() == ThreadMode::OwnThread && can_receive<R, Event>>
+    template<typename R> struct pred : std::bool_constant<is_receiver<R> && is_own_thread_v<R> && can_receive<R, Event>>
     {
     };
   };
@@ -836,9 +847,6 @@ namespace detail {
     // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
     void stop() noexcept {}
 
-    // cppcheck-suppress unusedStructMember
-    static constexpr ThreadMode mode = ThreadMode::SameThread;
-
   private:
     Receiver receiver_;
     dispatcher_type dispatcher_;
@@ -898,9 +906,6 @@ namespace detail {
     // cppcheck-suppress functionStatic ; explicit object parameter functions cannot be static
     template<typename Self> [[nodiscard]] auto& get(this Self& self) noexcept { return self.receiver_; }
 
-    // cppcheck-suppress unusedStructMember
-    static constexpr ThreadMode mode = ThreadMode::OwnThread;
-
   private:
     void run_loop()
     {
@@ -940,7 +945,7 @@ namespace detail {
   // Receiver case: select based on thread mode
   template<typename Receiver, typename EventLoopType> struct wrapper_selector<Receiver, EventLoopType, true>
   {
-    using type = std::conditional_t<get_thread_mode<Receiver>() == ThreadMode::OwnThread,
+    using type = std::conditional_t<is_own_thread_v<Receiver>,
       OwnThreadWrapper<Receiver, EventLoopType>,
       SameThreadWrapper<Receiver, EventLoopType>>;
   };
@@ -987,8 +992,8 @@ namespace detail {
 
   // Helper to get events from a single same-thread receiver (or empty list)
   template<typename R>
-  using same_thread_events_from = std::
-    conditional_t<is_receiver<R> && get_thread_mode<R>() == ThreadMode::SameThread, get_receives_t<R>, type_list<>>;
+  using same_thread_events_from =
+    std::conditional_t<is_receiver<R> && is_same_thread_v<R>, get_receives_t<R>, type_list<>>;
 
   // Operator for fold-based concatenation (ADL will find it)
   template<typename... Ls, typename... Rs>
@@ -1015,7 +1020,7 @@ namespace detail {
   // Helper to get events received by a single OwnThread receiver (or empty list)
   template<typename R>
   using own_thread_events_from =
-    std::conditional_t<is_receiver<R> && get_thread_mode<R>() == ThreadMode::OwnThread, get_receives_t<R>, type_list<>>;
+    std::conditional_t<is_receiver<R> && is_own_thread_v<R>, get_receives_t<R>, type_list<>>;
 
   // Collect all events received by OwnThread receivers
   template<typename... Receivers>
@@ -1023,8 +1028,7 @@ namespace detail {
 
   // Helper to get events emitted by a single OwnThread receiver (or empty list)
   template<typename R>
-  using ot_emitted_events_from =
-    std::conditional_t<get_thread_mode<R>() == ThreadMode::OwnThread, get_emits_t<R>, type_list<>>;
+  using ot_emitted_events_from = std::conditional_t<is_own_thread_v<R>, get_emits_t<R>, type_list<>>;
 
   // Collect all events emitted by OwnThread receivers (ECS-style precomputation)
   template<typename... Receivers>
@@ -1251,11 +1255,10 @@ public:
 
   // Find index of first SameThread receiver for an event using fold-based search
   template<typename Event, typename R, std::size_t I>
-  using st_receiver_match =
-    std::conditional_t<detail::is_receiver<R> && detail::get_thread_mode<R>() == ThreadMode::SameThread
-                         && detail::contains_v<detail::get_receives_t<R>, Event>,
-      detail::found_at<I>,
-      detail::not_found>;
+  using st_receiver_match = std::conditional_t<detail::is_receiver<R> && detail::is_same_thread_v<R>
+                                                 && detail::contains_v<detail::get_receives_t<R>, Event>,
+    detail::found_at<I>,
+    detail::not_found>;
 
   template<typename Event, std::size_t... Is>
   static consteval std::size_t find_st_receiver_index_impl(std::index_sequence<Is...> /*unused*/)
@@ -1276,7 +1279,7 @@ private:
   // Count SameThread emitters for an event (using consteval, not filter_list_t)
   template<typename Event> static consteval bool has_st_emitter_for_event()
   {
-    return ((!detail::is_external_emitter<Receivers> && detail::get_thread_mode<Receivers>() == ThreadMode::SameThread
+    return ((!detail::is_external_emitter<Receivers> && detail::is_same_thread_v<Receivers>
               && detail::contains_v<detail::get_emits_t<Receivers>, Event>)
             || ...);
   }
@@ -1284,10 +1287,7 @@ private:
   // Count OwnThread emitters for an event
   template<typename Event> static consteval std::size_t count_ot_emitters_for_event()
   {
-    return ((detail::get_thread_mode<Receivers>() == ThreadMode::OwnThread
-                  && detail::contains_v<detail::get_emits_t<Receivers>, Event>
-                ? 1
-                : 0)
+    return ((detail::is_own_thread_v<Receivers> && detail::contains_v<detail::get_emits_t<Receivers>, Event> ? 1 : 0)
             + ... + 0);
   }
 
@@ -1409,7 +1409,7 @@ private:
   template<std::size_t I> void start_one()
   {
     if constexpr (detail::is_receiver<detail::type_list_at_t<I, receiver_list>>
-                  && detail::get_thread_mode<detail::type_list_at_t<I, receiver_list>>() == ThreadMode::OwnThread) {
+                  && detail::is_own_thread_v<detail::type_list_at_t<I, receiver_list>>) {
       std::get<I>(receivers_)->start();
     }
   }
@@ -1417,7 +1417,7 @@ private:
   template<std::size_t I> void stop_one()
   {
     if constexpr (detail::is_receiver<detail::type_list_at_t<I, receiver_list>>
-                  && detail::get_thread_mode<detail::type_list_at_t<I, receiver_list>>() == ThreadMode::OwnThread) {
+                  && detail::is_own_thread_v<detail::type_list_at_t<I, receiver_list>>) {
       std::get<I>(receivers_)->stop();
     }
   }

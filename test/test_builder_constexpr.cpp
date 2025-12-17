@@ -6,31 +6,27 @@ namespace {
 
 struct TestEvent
 {
-  int value;
 };
 
 struct ReceiverA
 {
   using receives = ev_loop::type_list<TestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
-  template<typename D> void on_event(TestEvent /*unused*/, D& /*unused*/) {}
+  using thread_mode = ev_loop::SameThread;
+  template<typename D> static void on_event(TestEvent /*unused*/, D& /*unused*/) {}
 };
 
 struct ReceiverB
 {
   using receives = ev_loop::type_list<TestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
-  template<typename D> void on_event(TestEvent /*unused*/, D& /*unused*/) {}
+  using thread_mode = ev_loop::SameThread;
+  template<typename D> static void on_event(TestEvent /*unused*/, D& /*unused*/) {}
 };
 
 struct ReceiverC
 {
   using receives = ev_loop::type_list<TestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
-  template<typename D> void on_event(TestEvent /*unused*/, D& /*unused*/) {}
+  using thread_mode = ev_loop::OwnThread;
+  template<typename D> static void on_event(TestEvent /*unused*/, D& /*unused*/) {}
 };
 
 } // namespace

@@ -28,7 +28,7 @@ struct A
   using receives = ev_loop::type_list<Pong>;
   using emits = ev_loop::type_list<Ping>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
@@ -47,7 +47,7 @@ struct B
   using receives = ev_loop::type_list<Ping>;
   using emits = ev_loop::type_list<Pong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)

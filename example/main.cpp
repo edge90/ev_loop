@@ -43,7 +43,7 @@ struct Logger
 {
   using receives = ev_loop::type_list<LogEvent, ProcessedEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(const LogEvent& event, Dispatcher& /*dispatcher*/)
@@ -68,7 +68,7 @@ struct Controller
   using receives = ev_loop::type_list<StartEvent>;
   using emits = ev_loop::type_list<DataEvent, LogEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(StartEvent event, Dispatcher& dispatcher)
@@ -88,7 +88,7 @@ struct Processor
   using receives = ev_loop::type_list<DataEvent>;
   using emits = ev_loop::type_list<ProcessedEvent, LogEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   int counter = 0;
 
@@ -112,7 +112,7 @@ struct ChainHandler
   using receives = ev_loop::type_list<ChainEvent>;
   using emits = ev_loop::type_list<ChainEvent, LogEvent>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   // cppcheck-suppress functionStatic ; on_event must be member function for ev library
   template<typename Dispatcher> void on_event(ChainEvent event, Dispatcher& dispatcher)
