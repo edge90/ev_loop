@@ -89,7 +89,7 @@ TEST_CASE("Move optimization SameThread", "[move_optimization]")
       REQUIRE(loop.get<TrackedReceiver1>().received == 1);
     }
     REQUIRE(counter->balanced());
-    REQUIRE(counter->copy_count == 0);
+    REQUIRE(counter->copy_count.load() == 0);
   }
 
   SECTION("fanout copies to N-1 moves to last")
@@ -111,7 +111,7 @@ TEST_CASE("Move optimization SameThread", "[move_optimization]")
       REQUIRE(loop.get<TrackedReceiver3>().received == 1);
     }
     REQUIRE(counter->balanced());
-    REQUIRE(counter->copy_count == 2);
+    REQUIRE(counter->copy_count.load() == 2);
   }
 }
 
@@ -133,7 +133,7 @@ TEST_CASE("Move optimization OwnThread", "[move_optimization][threaded]")
     loop.stop();
 
     REQUIRE(loop.get<TrackedOwnThreadReceiver1>().received.load() == 1);
-    REQUIRE(counter->copy_count == 0);
+    REQUIRE(counter->copy_count.load() == 0);
   }
 
   SECTION("multiple receivers copy optimization")
@@ -153,7 +153,7 @@ TEST_CASE("Move optimization OwnThread", "[move_optimization][threaded]")
 
     REQUIRE(loop.get<TrackedOwnThreadReceiver1>().received.load() == 1);
     REQUIRE(loop.get<TrackedOwnThreadReceiver2>().received.load() == 1);
-    REQUIRE(counter->copy_count == 1);
+    REQUIRE(counter->copy_count.load() == 1);
   }
 
   SECTION("mixed same and ownthread")
@@ -175,6 +175,6 @@ TEST_CASE("Move optimization OwnThread", "[move_optimization][threaded]")
 
     REQUIRE(loop.get<TrackedReceiver1>().received == 1);
     REQUIRE(loop.get<TrackedOwnThreadReceiver1>().received.load() == 1);
-    REQUIRE(counter->copy_count == 1);
+    REQUIRE(counter->copy_count.load() == 1);
   }
 }
