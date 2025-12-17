@@ -141,14 +141,18 @@ TEST_CASE("Strategies work as temporaries", "[strategies]")
 
   SECTION("Spin")
   {
-    while (ev_loop::Spin{ loop }.poll()) {}
+    REQUIRE(ev_loop::Spin{ loop }.poll());
+    REQUIRE(ev_loop::Spin{ loop }.poll());
+    REQUIRE_FALSE(ev_loop::Spin{ loop }.poll());
     REQUIRE(loop.get<TestReceiver>().count == 2);
     REQUIRE(loop.get<TestReceiver>().sum == 3);
   }
 
   SECTION("Yield")
   {
-    while (ev_loop::Yield{ loop }.poll()) {}
+    REQUIRE(ev_loop::Yield{ loop }.poll());
+    REQUIRE(ev_loop::Yield{ loop }.poll());
+    REQUIRE_FALSE(ev_loop::Yield{ loop }.poll());
     REQUIRE(loop.get<TestReceiver>().count == 2);
     REQUIRE(loop.get<TestReceiver>().sum == 3);
   }

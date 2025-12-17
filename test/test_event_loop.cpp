@@ -142,6 +142,7 @@ TEST_CASE("EventLoop ping pong", "[event_loop]")
   loop.stop();
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_CASE("EventLoop string events", "[event_loop]")
 {
   constexpr std::size_t kExpectedCount = 3;
@@ -153,7 +154,8 @@ TEST_CASE("EventLoop string events", "[event_loop]")
   loop.emit(StringEvent{ "world" });
   loop.emit(StringEvent{ std::string(kLongStringSize, 'x') });
 
-  while (ev_loop::Spin{ loop }.poll()) {}
+  for (std::size_t i = 0; i < kExpectedCount; ++i) { REQUIRE(ev_loop::Spin{ loop }.poll()); }
+  REQUIRE_FALSE(ev_loop::Spin{ loop }.poll());
 
   REQUIRE(loop.get<StringReceiver>().received.size() == kExpectedCount);
   REQUIRE(loop.get<StringReceiver>().received[0] == "hello");
@@ -217,7 +219,8 @@ TEST_CASE("EventLoop fanout", "[event_loop]")
   loop.emit(FanoutEvent{ 2 });
   loop.emit(FanoutEvent{ 3 });
 
-  while (ev_loop::Spin{ loop }.poll()) {}
+  for (std::size_t i = 0; i < kExpectedCount; ++i) { REQUIRE(ev_loop::Spin{ loop }.poll()); }
+  REQUIRE_FALSE(ev_loop::Spin{ loop }.poll());
 
   loop.stop();
 

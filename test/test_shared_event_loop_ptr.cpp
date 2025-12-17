@@ -75,7 +75,8 @@ TEST_CASE("SharedEventLoopPtr basic operations", "[shared_event_loop_ptr]")
   {
     ptr.start();
     ptr.emit(TestEvent{ 42 });
-    while (ev_loop::Spin{ *ptr }.poll()) {}
+    REQUIRE(ev_loop::Spin{ *ptr }.poll());
+    REQUIRE_FALSE(ev_loop::Spin{ *ptr }.poll());
     REQUIRE(ptr.get<TestReceiver>().count == 1);
     REQUIRE(ptr.get<TestReceiver>().sum == 42);
     ptr.stop();
@@ -85,7 +86,8 @@ TEST_CASE("SharedEventLoopPtr basic operations", "[shared_event_loop_ptr]")
   {
     ptr.start();
     ptr->emit(TestEvent{ 10 });
-    while (ev_loop::Spin{ *ptr }.poll()) {}
+    REQUIRE(ev_loop::Spin{ *ptr }.poll());
+    REQUIRE_FALSE(ev_loop::Spin{ *ptr }.poll());
     REQUIRE((*ptr).get<TestReceiver>().count == 1);
     ptr.stop();
   }
@@ -105,7 +107,9 @@ TEST_CASE("SharedEventLoopPtr is copyable", "[shared_event_loop_ptr]")
 
   // Both point to same underlying loop
   ptr2.emit(TestEvent{ 2 });
-  while (ev_loop::Spin{ *ptr1 }.poll()) {}
+  REQUIRE(ev_loop::Spin{ *ptr1 }.poll());
+  REQUIRE(ev_loop::Spin{ *ptr1 }.poll());
+  REQUIRE_FALSE(ev_loop::Spin{ *ptr1 }.poll());
 
   REQUIRE(ptr1.get<TestReceiver>().count == 2);
   REQUIRE(ptr2.get<TestReceiver>().count == 2);
