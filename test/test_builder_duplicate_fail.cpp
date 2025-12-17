@@ -5,15 +5,13 @@
 
 struct DummyEvent
 {
-  int value;
 };
 
 struct MyReceiver
 {
   using receives = ev_loop::type_list<DummyEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
-  template<typename D> void on_event(DummyEvent /*unused*/, D& /*unused*/) {}
+  using thread_mode = ev_loop::SameThread;
+  template<typename D> static void on_event(DummyEvent /*unused*/, D& /*unused*/) {}
 };
 
 int main()

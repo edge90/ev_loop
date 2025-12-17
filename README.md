@@ -30,7 +30,7 @@ struct PongEvent { int value; };
 struct PingReceiver {
   using receives = ev_loop::type_list<PongEvent>;
   using emits = ev_loop::type_list<PingEvent>;
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   template<typename Dispatcher>
   void on_event(PongEvent event, Dispatcher& dispatcher) {
@@ -43,7 +43,7 @@ struct PingReceiver {
 struct PongReceiver {
   using receives = ev_loop::type_list<PingEvent>;
   using emits = ev_loop::type_list<PongEvent>;
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   template<typename Dispatcher>
   void on_event(PingEvent event, Dispatcher& dispatcher) {
@@ -75,7 +75,7 @@ Receivers run on their own dedicated thread with a private SPSC queue for high-t
 ```cpp
 struct BackgroundProcessor {
   using receives = ev_loop::type_list<DataEvent>;
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   template<typename Dispatcher>
   void on_event(DataEvent event, Dispatcher& dispatcher) {

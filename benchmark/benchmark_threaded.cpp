@@ -38,7 +38,7 @@ struct C_OwnThread
   using receives = ev_loop::type_list<Pong>;
   using emits = ev_loop::type_list<Ping>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int>* counter = nullptr;
 
@@ -54,7 +54,7 @@ struct D_OwnThread
   using receives = ev_loop::type_list<Ping>;
   using emits = ev_loop::type_list<Pong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int>* counter = nullptr;
 
@@ -74,7 +74,7 @@ struct A_SameThread
   using receives = ev_loop::type_list<Pong>;
   using emits = ev_loop::type_list<Ping>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   int counter = 0;
   int last_value = 0;
@@ -92,7 +92,7 @@ struct D_OwnThread_ForMixed
   using receives = ev_loop::type_list<Ping>;
   using emits = ev_loop::type_list<Pong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> counter{ 0 };
 
@@ -112,7 +112,7 @@ struct A_SameThread_Relay
   using receives = ev_loop::type_list<Pong>;
   using emits = ev_loop::type_list<Ping>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   int counter = 0;
 
@@ -128,7 +128,7 @@ struct D_OwnThread_Starter
   using receives = ev_loop::type_list<Ping>;
   using emits = ev_loop::type_list<Pong>;
   // cppcheck-suppress unusedStructMember
-  static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> counter{ 0 };
   std::atomic<int> last_value{ 0 };

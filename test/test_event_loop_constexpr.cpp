@@ -7,16 +7,14 @@ namespace {
 
 struct ConstexprTestEvent
 {
-  int value;
 };
 
 struct ConstexprTestReceiver
 {
   using receives = ev_loop::type_list<ConstexprTestEvent>;
   using emits = ev_loop::type_list<ConstexprTestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
-  template<typename D> void on_event(ConstexprTestEvent /*unused*/, D& /*unused*/) {}
+  using thread_mode = ev_loop::SameThread;
+  template<typename D> static void on_event(ConstexprTestEvent /*unused*/, D& /*unused*/) {}
 };
 
 } // namespace

@@ -11,10 +11,10 @@ struct TestEvent
 
 struct TestReceiver
 {
+  int count = 0;
   using receives = ev_loop::type_list<TestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
-  template<typename D> void on_event(TestEvent /*unused*/, D& /*unused*/) {}
+  using thread_mode = ev_loop::SameThread;
+  template<typename D> void on_event(TestEvent event, D& /*unused*/) { count += event.value; }
 };
 
 using TestLoop = ev_loop::EventLoop<TestReceiver>;

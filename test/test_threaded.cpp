@@ -63,8 +63,7 @@ struct ThreadedPingReceiver
 {
   using receives = ev_loop::type_list<PongEvent>;
   using emits = ev_loop::type_list<PingEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> received_count{ 0 };
   std::atomic<int> last_value{ 0 };
@@ -81,8 +80,7 @@ struct ThreadedPongReceiver
 {
   using receives = ev_loop::type_list<PingEvent>;
   using emits = ev_loop::type_list<PongEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> received_count{ 0 };
 
@@ -96,8 +94,7 @@ struct ThreadedPongReceiver
 struct ThreadedStringReceiver
 {
   using receives = ev_loop::type_list<StringEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> count{ 0 };
   std::mutex mutex;
@@ -160,8 +157,7 @@ TEST_CASE("EventLoop own thread string events", "[event_loop][own_thread]")
 struct SameThreadCounter
 {
   using receives = ev_loop::type_list<MixedEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   int count = 0;
   int sum = 0;
@@ -176,8 +172,7 @@ struct SameThreadCounter
 struct OwnThreadCounter
 {
   using receives = ev_loop::type_list<MixedEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> count{ 0 };
   std::atomic<int> sum{ 0 };
@@ -216,8 +211,7 @@ struct CrossA_SameThread
 {
   using receives = ev_loop::type_list<CrossPong>;
   using emits = ev_loop::type_list<CrossPing>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   int received_count = 0;
   int last_value = 0;
@@ -234,8 +228,7 @@ struct CrossD_OwnThread
 {
   using receives = ev_loop::type_list<CrossPing>;
   using emits = ev_loop::type_list<CrossPong>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> received_count{ 0 };
 
@@ -250,8 +243,7 @@ struct CrossD_OwnThread_Starter
 {
   using receives = ev_loop::type_list<CrossPong>;
   using emits = ev_loop::type_list<CrossPing>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> received_count{ 0 };
   std::atomic<int> last_value{ 0 };
@@ -268,8 +260,7 @@ struct CrossA_SameThread_Relay
 {
   using receives = ev_loop::type_list<CrossPing>;
   using emits = ev_loop::type_list<CrossPong>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   int received_count = 0;
 
@@ -372,8 +363,7 @@ struct ExternalThreadEvent
 struct ExternalThreadReceiver
 {
   using receives = ev_loop::type_list<ExternalThreadEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> count{ 0 };
   std::atomic<int> sum{ 0 };
@@ -457,8 +447,7 @@ struct ProducerA_OwnThread
 {
   using receives = ev_loop::type_list<PingEvent>;
   using emits = ev_loop::type_list<MultiProdEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> count{ 0 };
 
@@ -473,8 +462,7 @@ struct ProducerB_OwnThread
 {
   using receives = ev_loop::type_list<PongEvent>;
   using emits = ev_loop::type_list<MultiProdEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> count{ 0 };
 
@@ -488,8 +476,7 @@ struct ProducerB_OwnThread
 struct MultiConsumer_OwnThread
 {
   using receives = ev_loop::type_list<MultiProdEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> count{ 0 };
   std::atomic<int> from_a{ 0 };
@@ -511,8 +498,7 @@ struct SameThreadProducer
 {
   using receives = ev_loop::type_list<PingEvent>;
   using emits = ev_loop::type_list<MultiProdEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
 
   int count = 0;
 
@@ -528,8 +514,7 @@ struct OwnThreadProducer
 {
   using receives = ev_loop::type_list<PongEvent>;
   using emits = ev_loop::type_list<MultiProdEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> count{ 0 };
 

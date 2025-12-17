@@ -25,8 +25,7 @@ struct TestEvent
 struct TestReceiver
 {
   using receives = ev_loop::type_list<TestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
   int count = 0;
   int sum = 0;
   template<typename D> void on_event(TestEvent event, D& /*unused*/)
@@ -39,8 +38,7 @@ struct TestReceiver
 struct OwnThreadReceiver
 {
   using receives = ev_loop::type_list<TestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
   std::atomic<int> count{ 0 };
   template<typename D> void on_event(TestEvent /*unused*/, D& /*unused*/)
   {

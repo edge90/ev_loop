@@ -9,8 +9,7 @@ struct TestEvent
 struct BuilderReceiverA
 {
   using receives = ev_loop::type_list<TestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
   int sum = 0;
   template<typename Dispatcher> void on_event(TestEvent event, Dispatcher& /*dispatcher*/) { sum += event.value; }
 };
@@ -18,8 +17,7 @@ struct BuilderReceiverA
 struct BuilderReceiverB
 {
   using receives = ev_loop::type_list<TestEvent>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
   int sum = 0;
   template<typename Dispatcher> void on_event(TestEvent event, Dispatcher& /*dispatcher*/) { sum += event.value; }
 };

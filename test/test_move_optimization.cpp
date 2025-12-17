@@ -19,8 +19,7 @@ constexpr int kPollDelayMs = 1;
 struct TrackedReceiver1
 {
   using receives = ev_loop::type_list<TrackedString>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/) { ++received; }
@@ -29,8 +28,7 @@ struct TrackedReceiver1
 struct TrackedReceiver2
 {
   using receives = ev_loop::type_list<TrackedString>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/) { ++received; }
@@ -39,8 +37,7 @@ struct TrackedReceiver2
 struct TrackedReceiver3
 {
   using receives = ev_loop::type_list<TrackedString>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::SameThread;
+  using thread_mode = ev_loop::SameThread;
   int received = 0;
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/) { ++received; }
@@ -53,8 +50,7 @@ struct TrackedReceiver3
 struct TrackedOwnThreadReceiver1
 {
   using receives = ev_loop::type_list<TrackedString>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
   std::atomic<int> received{ 0 };
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/) { ++received; }
@@ -63,8 +59,7 @@ struct TrackedOwnThreadReceiver1
 struct TrackedOwnThreadReceiver2
 {
   using receives = ev_loop::type_list<TrackedString>;
-  // cppcheck-suppress unusedStructMember
-  [[maybe_unused]] static constexpr ev_loop::ThreadMode thread_mode = ev_loop::ThreadMode::OwnThread;
+  using thread_mode = ev_loop::OwnThread;
   std::atomic<int> received{ 0 };
   // NOLINTNEXTLINE(performance-unnecessary-value-param) - testing move optimization requires by-value
   template<typename Dispatcher> void on_event(TrackedString /*event*/, Dispatcher& /*dispatcher*/) { ++received; }
