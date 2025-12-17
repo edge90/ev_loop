@@ -111,8 +111,8 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event1;
       tagged_event1.store(TrackedString{ counter, "moveme" });
 
-      const int before_construct = counter->constructed_count;
-      const int before_destruct = counter->destructed_count;
+      const int before_construct = counter->constructed_count.load();
+      const int before_destruct = counter->destructed_count.load();
 
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2(std::move(tagged_event1));
       REQUIRE(tagged_event2.get<0>().value == "moveme");
@@ -122,8 +122,8 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
       REQUIRE(tagged_event1.index() == kUninitializedTag);
 
-      REQUIRE(counter->constructed_count == before_construct + 1);
-      REQUIRE(counter->destructed_count == before_destruct + 1);
+      REQUIRE(counter->constructed_count.load() == before_construct + 1);
+      REQUIRE(counter->destructed_count.load() == before_destruct + 1);
     }
     REQUIRE(counter->balanced());
   }
@@ -138,7 +138,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2;
       tagged_event2.store(TrackedString{ counter, "dest" });
 
-      const int before_destruct = counter->destructed_count;
+      const int before_destruct = counter->destructed_count.load();
 
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.get<0>().value == "source");
@@ -147,7 +147,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved,clang-analyzer-cplusplus.Move)
       REQUIRE(tagged_event1.index() == kUninitializedTag);
 
-      REQUIRE(counter->destructed_count > before_destruct);
+      REQUIRE(counter->destructed_count.load() > before_destruct);
     }
     REQUIRE(counter->balanced());
   }
@@ -164,7 +164,7 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       REQUIRE(tagged_event1.get<0>().value == "copyme");
     }
     REQUIRE(counter->balanced());
-    REQUIRE(counter->copy_count > 0);
+    REQUIRE(counter->copy_count.load() > 0);
   }
 
   SECTION("copy assignment")
@@ -272,10 +272,10 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
       ev_loop::detail::TaggedEvent<TrackedString, int> tagged_event2;
       tagged_event2.store(TrackedString{ counter, "dest" });
 
-      const int before_destruct = counter->destructed_count;
+      const int before_destruct = counter->destructed_count.load();
       tagged_event2 = std::move(tagged_event1);
       REQUIRE(tagged_event2.index() == kUninitializedTag);
-      REQUIRE(counter->destructed_count > before_destruct); // dest was destroyed
+      REQUIRE(counter->destructed_count.load() > before_destruct); // dest was destroyed
     }
     REQUIRE(counter->balanced());
   }
@@ -298,13 +298,13 @@ TEST_CASE("TaggedEvent", "[tagged_event]")
     {
       ev_loop::detail::TaggedEvent<TrackedString, int> tracked;
       tracked.store(TrackedString{ counter, "reftest" });
-      const int constructs_before = counter->constructed_count;
+      const int constructs_before = counter->constructed_count.load();
 
       // Getting reference should not copy or move
       const TrackedString& ref = tracked.get<0>();
       REQUIRE(ref.value == "reftest");
-      REQUIRE(counter->constructed_count == constructs_before);
-      REQUIRE(counter->copy_count == 0);
+      REQUIRE(counter->constructed_count.load() == constructs_before);
+      REQUIRE(counter->copy_count.load() == 0);
     }
   }
 

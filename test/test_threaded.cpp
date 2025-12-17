@@ -6,7 +6,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -300,14 +299,12 @@ TEST_CASE("EventLoop cross thread ownthread to samethread", "[event_loop][cross_
 
   loop.emit(CrossPing{ 0 });
 
+  // Interleave polling (for SameThread) with waiting (for OwnThread completion)
   ev_loop::Spin strategy{ loop };
-  while (loop.get<CrossD_OwnThread_Starter>().last_value < kPingPongLimit) {
-    std::ignore = strategy.poll();
-    std::this_thread::sleep_for(std::chrono::microseconds(kSpinDelayUs));
+  auto is_done = [&] { return loop.get<CrossD_OwnThread_Starter>().received_count >= kPingPongExpectedCount; };
+  while (!loop.get<CrossD_OwnThread_Starter>().wait_for(is_done, std::chrono::milliseconds(1))) {
+    while (strategy.poll()) {}
   }
-
-  std::this_thread::sleep_for(std::chrono::milliseconds(kSettleDelayMs));
-  while (strategy.poll()) {}
 
   loop.stop();
 

@@ -31,6 +31,7 @@ target_sources(tests PRIVATE
     test_builder.cpp
     test_move_optimization.cpp
     test_threaded.cpp
+    test_utils.cpp
 )
 target_link_libraries(tests
   PRIVATE ev_loop::ev_loop_warnings
