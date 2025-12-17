@@ -1,7 +1,8 @@
 // NOLINTBEGIN(misc-include-cleaner)
+#include "test_utils.hpp"
+
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
-#include <chrono>
 #include <cstddef>
 #include <ev_loop/ev.hpp>
 #include <thread>
@@ -14,8 +15,6 @@
 // =============================================================================
 
 namespace {
-
-constexpr int kPollDelayMs = 1;
 
 struct TestEvent
 {
@@ -35,14 +34,15 @@ struct TestReceiver
   }
 };
 
-struct OwnThreadReceiver
+struct OwnThreadReceiver : WaitableReceiver<OwnThreadReceiver>
 {
   using receives = ev_loop::type_list<TestEvent>;
   using thread_mode = ev_loop::OwnThread;
-  std::atomic<int> count{ 0 };
+  int count = 0;
+
   template<typename D> void on_event(TestEvent /*unused*/, D& /*unused*/)
   {
-    count.fetch_add(1, std::memory_order_relaxed);
+    modify_and_notify([this] { ++count; });
   }
 };
 
@@ -130,10 +130,7 @@ TEST_CASE("SharedEventLoopPtr get_external_emitter", "[shared_event_loop_ptr]")
   REQUIRE(emitter.is_valid());
   REQUIRE(emitter.emit(TestEvent{ 100 }));
 
-  // Wait for OwnThread receiver to process event
-  while (ptr.get<OwnThreadReceiver>().count < 1) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
+  ptr.get<OwnThreadReceiver>().wait_until([&] { return ptr.get<OwnThreadReceiver>().count >= 1; });
 
   REQUIRE(ptr.get<OwnThreadReceiver>().count == 1);
 

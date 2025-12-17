@@ -21,7 +21,7 @@ template<typename Derived> struct WaitableReceiver
   {
     {
       std::lock_guard lock(mtx);
-      modifier();
+      std::forward<F>(modifier)();
     }
     cv.notify_all();
   }
