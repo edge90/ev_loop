@@ -1,7 +1,8 @@
 // NOLINTBEGIN(misc-include-cleaner)
+#include "test_utils.hpp"
+
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
-#include <chrono>
 #include <ev_loop/ev.hpp>
 #include <memory>
 #include <thread>
@@ -15,7 +16,6 @@
 namespace {
 
 constexpr int kEventCount = 100;
-constexpr int kPollDelayMs = 1;
 
 struct TestEvent
 {
@@ -35,16 +35,19 @@ struct SameThreadReceiver
   }
 };
 
-struct OwnThreadReceiver
+struct OwnThreadReceiver : WaitableReceiver<OwnThreadReceiver>
 {
   using receives = ev_loop::type_list<TestEvent>;
   using thread_mode = ev_loop::OwnThread;
-  std::atomic<int> count{ 0 };
-  std::atomic<int> sum{ 0 };
+  int count = 0;
+  int sum = 0;
+
   template<typename D> void on_event(TestEvent event, D& /*unused*/)
   {
-    count.fetch_add(1, std::memory_order_relaxed);
-    sum.fetch_add(event.value, std::memory_order_relaxed);
+    modify_and_notify([this, event] {
+      ++count;
+      sum += event.value;
+    });
   }
 };
 
@@ -72,10 +75,7 @@ TEST_CASE("TypedExternalEmitter basic operations", "[external_emitter]")
   SECTION("emit returns true while loop exists")
   {
     REQUIRE(emitter.emit(TestEvent{ 42 }));
-    // Wait for OwnThread receiver to process event
-    while (loop.get<OwnThreadReceiver>().count < 1) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-    }
+    loop.get<OwnThreadReceiver>().wait_until([&] { return loop.get<OwnThreadReceiver>().count >= 1; });
     REQUIRE(loop.get<OwnThreadReceiver>().count == 1);
     REQUIRE(loop.get<OwnThreadReceiver>().sum == 42);
   }
@@ -101,11 +101,7 @@ TEST_CASE("TypedExternalEmitter from another thread", "[external_emitter][thread
 
   producer.join();
 
-  // Wait for OwnThread receiver to process all events
-  while (loop.get<OwnThreadReceiver>().count < kEventCount) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
-
+  loop.get<OwnThreadReceiver>().wait_until([&] { return loop.get<OwnThreadReceiver>().count >= kEventCount; });
   loop.stop();
 
   // Sum of 1..100 = 5050
@@ -127,10 +123,7 @@ TEST_CASE("TypedExternalEmitter safe after SharedEventLoopPtr destruction", "[ex
     // Emitter should be valid while loop exists
     REQUIRE(ext_emitter.is_valid());
     REQUIRE(ext_emitter.emit(TestEvent{ 1 }) == true);
-    // Wait for event to be processed
-    while (loop.get<OwnThreadReceiver>().count < 1) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-    }
+    loop.get<OwnThreadReceiver>().wait_until([&] { return loop.get<OwnThreadReceiver>().count >= 1; });
     loop.stop();
     return ext_emitter;
   }();

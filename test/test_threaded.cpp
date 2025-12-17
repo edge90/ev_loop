@@ -1,9 +1,10 @@
+#include "test_utils.hpp"
+
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstddef>
 #include <ev_loop/ev.hpp>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -19,7 +20,6 @@ constexpr int kPingPongLimit = 100;
 constexpr int kPingPongExpectedCount = 51;
 constexpr int kEventCount = 100;
 constexpr int kMixedEventCount = 50;
-constexpr int kPollDelayMs = 1;
 constexpr int kSettleDelayMs = 10;
 constexpr int kSpinDelayUs = 100;
 constexpr std::size_t kHybridSpinCount = 100;
@@ -58,20 +58,22 @@ struct CrossPong
 // Own thread receivers
 // =============================================================================
 
-struct ThreadedPingReceiver
+struct ThreadedPingReceiver : WaitableReceiver<ThreadedPingReceiver>
 {
   using receives = ev_loop::type_list<PongEvent>;
   using emits = ev_loop::type_list<PingEvent>;
   using thread_mode = ev_loop::OwnThread;
 
-  std::atomic<int> received_count{ 0 };
-  std::atomic<int> last_value{ 0 };
+  int received_count = 0;
+  int last_value = 0;
 
   template<typename Dispatcher> void on_event(PongEvent event, Dispatcher& dispatcher)
   {
-    received_count.fetch_add(1, std::memory_order_relaxed);
-    last_value.store(event.value, std::memory_order_relaxed);
     if (event.value < kPingPongLimit) { dispatcher.emit(PingEvent{ event.value + 1 }); }
+    modify_and_notify([this, event] {
+      ++received_count;
+      last_value = event.value;
+    });
   }
 };
 
@@ -90,22 +92,20 @@ struct ThreadedPongReceiver
   }
 };
 
-struct ThreadedStringReceiver
+struct ThreadedStringReceiver : WaitableReceiver<ThreadedStringReceiver>
 {
   using receives = ev_loop::type_list<StringEvent>;
   using thread_mode = ev_loop::OwnThread;
 
-  std::atomic<int> count{ 0 };
-  std::mutex mutex;
+  int count = 0;
   std::vector<std::string> received;
 
   template<typename Dispatcher> void on_event(StringEvent event, Dispatcher& /*dispatcher*/)
   {
-    {
-      const std::scoped_lock lock(mutex);
+    modify_and_notify([this, &event] {
       received.push_back(std::move(event.data));
-    }
-    count.fetch_add(1, std::memory_order_relaxed);
+      ++count;
+    });
   }
 };
 
@@ -120,11 +120,8 @@ TEST_CASE("EventLoop own thread ping pong", "[event_loop][own_thread]")
 
   loop.emit(PingEvent{ 0 });
 
-  while (loop.get<ThreadedPingReceiver>().last_value < kPingPongLimit + 1) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
-
-  std::this_thread::sleep_for(std::chrono::milliseconds(kSettleDelayMs));
+  loop.get<ThreadedPingReceiver>().wait_until(
+    [&] { return loop.get<ThreadedPingReceiver>().last_value >= kPingPongLimit + 1; });
 
   loop.stop();
 
@@ -139,9 +136,8 @@ TEST_CASE("EventLoop own thread string events", "[event_loop][own_thread]")
 
   for (int i = 0; i < kEventCount; ++i) { loop.emit(StringEvent{ "message_" + std::to_string(i) }); }
 
-  while (loop.get<ThreadedStringReceiver>().count < kEventCount) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
+  loop.get<ThreadedStringReceiver>().wait_until(
+    [&] { return loop.get<ThreadedStringReceiver>().count >= kEventCount; });
 
   loop.stop();
 
@@ -168,18 +164,20 @@ struct SameThreadCounter
   }
 };
 
-struct OwnThreadCounter
+struct OwnThreadCounter : WaitableReceiver<OwnThreadCounter>
 {
   using receives = ev_loop::type_list<MixedEvent>;
   using thread_mode = ev_loop::OwnThread;
 
-  std::atomic<int> count{ 0 };
-  std::atomic<int> sum{ 0 };
+  int count = 0;
+  int sum = 0;
 
   template<typename Dispatcher> void on_event(MixedEvent event, Dispatcher& /*dispatcher*/)
   {
-    ++count;
-    sum += event.value;
+    modify_and_notify([this, event] {
+      ++count;
+      sum += event.value;
+    });
   }
 };
 
@@ -192,9 +190,7 @@ TEST_CASE("EventLoop mixed threading", "[event_loop][mixed_thread]")
 
   while (ev_loop::Spin{ loop }.poll()) {}
 
-  while (loop.get<OwnThreadCounter>().count < kMixedEventCount) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
+  loop.get<OwnThreadCounter>().wait_until([&] { return loop.get<OwnThreadCounter>().count >= kMixedEventCount; });
 
   loop.stop();
 
@@ -238,20 +234,22 @@ struct CrossD_OwnThread
   }
 };
 
-struct CrossD_OwnThread_Starter
+struct CrossD_OwnThread_Starter : WaitableReceiver<CrossD_OwnThread_Starter>
 {
   using receives = ev_loop::type_list<CrossPong>;
   using emits = ev_loop::type_list<CrossPing>;
   using thread_mode = ev_loop::OwnThread;
 
-  std::atomic<int> received_count{ 0 };
-  std::atomic<int> last_value{ 0 };
+  int received_count = 0;
+  int last_value = 0;
 
   template<typename Dispatcher> void on_event(CrossPong event, Dispatcher& dispatcher)
   {
-    received_count.fetch_add(1, std::memory_order_relaxed);
-    last_value.store(event.value, std::memory_order_relaxed);
     if (event.value < kPingPongLimit) { dispatcher.emit(CrossPing{ event.value + 1 }); }
+    modify_and_notify([this, event] {
+      ++received_count;
+      last_value = event.value;
+    });
   }
 };
 
@@ -337,9 +335,8 @@ TEST_CASE("EventLoop cross thread blocking strategies", "[event_loop][cross_thre
     });
   }
 
-  while (loop.get<CrossD_OwnThread_Starter>().received_count < kPingPongExpectedCount) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
+  loop.get<CrossD_OwnThread_Starter>().wait_until(
+    [&] { return loop.get<CrossD_OwnThread_Starter>().received_count >= kPingPongExpectedCount; });
 
   loop.stop();
   strategy_thread.join();
@@ -357,18 +354,20 @@ struct ExternalThreadEvent
   int value;
 };
 
-struct ExternalThreadReceiver
+struct ExternalThreadReceiver : WaitableReceiver<ExternalThreadReceiver>
 {
   using receives = ev_loop::type_list<ExternalThreadEvent>;
   using thread_mode = ev_loop::OwnThread;
 
-  std::atomic<int> count{ 0 };
-  std::atomic<int> sum{ 0 };
+  int count = 0;
+  int sum = 0;
 
   template<typename Dispatcher> void on_event(ExternalThreadEvent event, Dispatcher& /*dispatcher*/)
   {
-    count.fetch_add(1, std::memory_order_relaxed);
-    sum.fetch_add(event.value, std::memory_order_relaxed);
+    modify_and_notify([this, event] {
+      ++count;
+      sum += event.value;
+    });
   }
 };
 
@@ -393,10 +392,8 @@ TEST_CASE("ExternalEmitter from another thread", "[event_loop][external_emitter]
 
   producer.join();
 
-  // Wait for OwnThread receiver to process all events
-  while (loop.get<ExternalThreadReceiver>().count < kEventCount) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
+  loop.get<ExternalThreadReceiver>().wait_until(
+    [&] { return loop.get<ExternalThreadReceiver>().count >= kEventCount; });
 
   loop.stop();
 
@@ -416,9 +413,7 @@ TEST_CASE("ExternalEmitter safe after SharedEventLoopPtr destruction", "[event_l
     REQUIRE(ext_emitter.is_valid());
     REQUIRE(ext_emitter.emit(ExternalThreadEvent{ 1 }) == true);
     // Wait for event to be processed
-    while (loop.get<ExternalThreadReceiver>().count < 1) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-    }
+    loop.get<ExternalThreadReceiver>().wait_until([&] { return loop.get<ExternalThreadReceiver>().count >= 1; });
     loop.stop();
     return ext_emitter;
   }();
@@ -470,23 +465,25 @@ struct ProducerB_OwnThread
   }
 };
 
-struct MultiConsumer_OwnThread
+struct MultiConsumer_OwnThread : WaitableReceiver<MultiConsumer_OwnThread>
 {
   using receives = ev_loop::type_list<MultiProdEvent>;
   using thread_mode = ev_loop::OwnThread;
 
-  std::atomic<int> count{ 0 };
-  std::atomic<int> from_a{ 0 };
-  std::atomic<int> from_b{ 0 };
+  int count = 0;
+  int from_a = 0;
+  int from_b = 0;
 
   template<typename Dispatcher> void on_event(MultiProdEvent event, Dispatcher& /*dispatcher*/)
   {
-    count.fetch_add(1, std::memory_order_relaxed);
-    if (event.source == 1) {
-      from_a.fetch_add(1, std::memory_order_relaxed);
-    } else {
-      from_b.fetch_add(1, std::memory_order_relaxed);
-    }
+    modify_and_notify([this, event] {
+      ++count;
+      if (event.source == 1) {
+        ++from_a;
+      } else {
+        ++from_b;
+      }
+    });
   }
 };
 
@@ -547,17 +544,16 @@ TEST_CASE("Two OwnThread producers to OwnThread consumer", "[event_loop][multi_p
   }
 
   // Wait for all events to be processed
-  while (loop.get<MultiConsumer_OwnThread>().count.load() < kEventsPerProducer * 2) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
+  loop.get<MultiConsumer_OwnThread>().wait_until(
+    [&] { return loop.get<MultiConsumer_OwnThread>().count >= kEventsPerProducer * 2; });
 
   loop.stop();
 
   REQUIRE(loop.get<ProducerA_OwnThread>().count.load() == kEventsPerProducer);
   REQUIRE(loop.get<ProducerB_OwnThread>().count.load() == kEventsPerProducer);
-  REQUIRE(loop.get<MultiConsumer_OwnThread>().count.load() == kEventsPerProducer * 2);
-  REQUIRE(loop.get<MultiConsumer_OwnThread>().from_a.load() == kEventsPerProducer);
-  REQUIRE(loop.get<MultiConsumer_OwnThread>().from_b.load() == kEventsPerProducer);
+  REQUIRE(loop.get<MultiConsumer_OwnThread>().count == kEventsPerProducer * 2);
+  REQUIRE(loop.get<MultiConsumer_OwnThread>().from_a == kEventsPerProducer);
+  REQUIRE(loop.get<MultiConsumer_OwnThread>().from_b == kEventsPerProducer);
 }
 
 TEST_CASE("SameThread + OwnThread producers to OwnThread consumer", "[event_loop][multi_producer]")
@@ -588,17 +584,16 @@ TEST_CASE("SameThread + OwnThread producers to OwnThread consumer", "[event_loop
   while (ev_loop::Spin{ loop }.poll()) {}
 
   // Wait for OwnThread events to be processed
-  while (loop.get<MultiConsumer_OwnThread>().count.load() < kEventsPerProducer * 2) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
-  }
+  loop.get<MultiConsumer_OwnThread>().wait_until(
+    [&] { return loop.get<MultiConsumer_OwnThread>().count >= kEventsPerProducer * 2; });
 
   loop.stop();
 
   REQUIRE(loop.get<SameThreadProducer>().count == kEventsPerProducer);
   REQUIRE(loop.get<OwnThreadProducer>().count.load() == kEventsPerProducer);
-  REQUIRE(loop.get<MultiConsumer_OwnThread>().count.load() == kEventsPerProducer * 2);
-  REQUIRE(loop.get<MultiConsumer_OwnThread>().from_a.load() == kEventsPerProducer);
-  REQUIRE(loop.get<MultiConsumer_OwnThread>().from_b.load() == kEventsPerProducer);
+  REQUIRE(loop.get<MultiConsumer_OwnThread>().count == kEventsPerProducer * 2);
+  REQUIRE(loop.get<MultiConsumer_OwnThread>().from_a == kEventsPerProducer);
+  REQUIRE(loop.get<MultiConsumer_OwnThread>().from_b == kEventsPerProducer);
 }
 
 TEST_CASE("Single producer selects SPSC queue", "[event_loop][multi_producer]")
