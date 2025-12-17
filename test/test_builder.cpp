@@ -32,7 +32,8 @@ TEST_CASE("Builder creates working EventLoop", "[builder]")
 
   loop.start();
   loop.emit(TestEvent{ kTestValue });
-  while (ev_loop::Spin{ loop }.poll()) {}
+  REQUIRE(ev_loop::Spin{ loop }.poll());
+  REQUIRE_FALSE(ev_loop::Spin{ loop }.poll());
   loop.stop();
 
   REQUIRE(loop.get<BuilderReceiverA>().sum == kTestValue);

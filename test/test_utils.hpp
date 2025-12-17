@@ -11,13 +11,13 @@
 
 struct TrackingCounter
 {
-  // cppcheck-suppress unusedStructMember ; used by TrackedString
+  // cppcheck-suppress unusedStructMember
   int constructed_count = 0;
-  // cppcheck-suppress unusedStructMember ; used by TrackedString
+  // cppcheck-suppress unusedStructMember
   int destructed_count = 0;
-  // cppcheck-suppress unusedStructMember ; used by TrackedString
+  // cppcheck-suppress unusedStructMember
   int move_count = 0;
-  // cppcheck-suppress unusedStructMember ; used by TrackedString
+  // cppcheck-suppress unusedStructMember
   int copy_count = 0;
 
   [[nodiscard]] bool balanced() const { return constructed_count == destructed_count; }

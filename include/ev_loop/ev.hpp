@@ -16,6 +16,13 @@
 #include <type_traits>
 #include <utility>
 
+// MSVC doesn't support [[assume]] yet, use __assume instead
+#ifdef _MSC_VER
+#define EV_ASSUME(expr) __assume(expr)
+#else
+#define EV_ASSUME(expr) [[assume(expr)]]
+#endif
+
 namespace ev_loop {
 
 // =============================================================================
@@ -281,9 +288,9 @@ namespace detail {
 
     template<std::size_t... Is> void destroy_at_index(std::index_sequence<Is...> /*unused*/)
     {
-      // cppcheck-suppress unreadVariable ; used by [[assume]]
+      // cppcheck-suppress unreadVariable ; used by EV_ASSUME
       const bool dispatched = ((tag == Is ? (destroy_type<Is>(), true) : false) || ...);
-      [[assume(dispatched)]];
+      EV_ASSUME(dispatched);
     }
 
     template<std::size_t I> void destroy_type()
@@ -302,9 +309,9 @@ namespace detail {
 
     template<std::size_t... Is> void copy_at_index(const TaggedEvent& other, std::index_sequence<Is...> /*unused*/)
     {
-      // cppcheck-suppress unreadVariable ; used by [[assume]]
+      // cppcheck-suppress unreadVariable ; used by EV_ASSUME
       const bool dispatched = ((tag == Is ? (copy_type<Is>(other), true) : false) || ...);
-      [[assume(dispatched)]];
+      EV_ASSUME(dispatched);
     }
 
     template<std::size_t I> void copy_type(const TaggedEvent& other)
@@ -321,9 +328,9 @@ namespace detail {
 
     template<std::size_t... Is> void move_at_index(TaggedEvent&& other, std::index_sequence<Is...> /*unused*/)
     {
-      // cppcheck-suppress unreadVariable ; used by [[assume]]
+      // cppcheck-suppress unreadVariable ; used by EV_ASSUME
       const bool dispatched = ((tag == Is ? (move_type<Is>(std::move(other)), true) : false) || ...);
-      [[assume(dispatched)]];
+      EV_ASSUME(dispatched);
     }
 
     // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved)
@@ -350,9 +357,9 @@ namespace detail {
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
   constexpr void fast_dispatch_impl(Tagged& tagged, Func&& func, std::index_sequence<Is...> /*unused*/)
   {
-    // cppcheck-suppress unreadVariable ; used by [[assume]]
+    // cppcheck-suppress unreadVariable ; used by EV_ASSUME
     const bool dispatched = ((tagged.index() == Is ? (func(tagged.template get<Is>()), true) : false) || ...);
-    [[assume(dispatched)]];
+    EV_ASSUME(dispatched);
   }
 
   template<typename... Events, typename Func> constexpr void fast_dispatch(TaggedEvent<Events...>& tagged, Func&& func)
@@ -995,14 +1002,20 @@ namespace detail {
   using same_thread_events_from =
     std::conditional_t<is_receiver<R> && is_same_thread_v<R>, get_receives_t<R>, type_list<>>;
 
-  // Operator for fold-based concatenation (ADL will find it)
+  // Operator for fold-based concatenation
   template<typename... Ls, typename... Rs>
-  constexpr auto operator+(type_list<Ls...>, type_list<Rs...>) -> type_list<Ls..., Rs...>;
+  consteval auto operator+(type_list<Ls...> /*unused*/, type_list<Rs...> /*unused*/) -> type_list<Ls..., Rs...>
+  {
+    return {};
+  }
 
-  // Concatenate multiple type_lists using fold expression (no recursion)
+  // Helper function for MSVC - fold in function body lets compiler deduce type
+  template<typename... Lists> consteval auto concat_type_lists_fn() { return (type_list<>{} + ... + Lists{}); }
+
+  // Concatenate multiple type_lists using fold expression (O(1) instantiation depth)
   template<typename... Lists> struct concat_type_lists
   {
-    using type = decltype((type_list<>{} + ... + std::declval<Lists>()));
+    using type = decltype(concat_type_lists_fn<Lists...>());
   };
 
   template<> struct concat_type_lists<>

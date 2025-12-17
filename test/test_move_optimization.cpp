@@ -81,7 +81,8 @@ TEST_CASE("Move optimization SameThread", "[move_optimization]")
 
       loop.emit(TrackedString{ counter, "test" });
 
-      while (ev_loop::Spin{ loop }.poll()) {}
+      REQUIRE(ev_loop::Spin{ loop }.poll());
+      REQUIRE_FALSE(ev_loop::Spin{ loop }.poll());
 
       loop.stop();
 
@@ -100,7 +101,8 @@ TEST_CASE("Move optimization SameThread", "[move_optimization]")
 
       loop.emit(TrackedString{ counter, "test" });
 
-      while (ev_loop::Spin{ loop }.poll()) {}
+      REQUIRE(ev_loop::Spin{ loop }.poll());
+      REQUIRE_FALSE(ev_loop::Spin{ loop }.poll());
 
       loop.stop();
 
@@ -162,7 +164,8 @@ TEST_CASE("Move optimization OwnThread", "[move_optimization][threaded]")
 
     loop.emit(TrackedString{ counter, "test" });
 
-    while (ev_loop::Spin{ loop }.poll()) {}
+    REQUIRE(ev_loop::Spin{ loop }.poll());
+    REQUIRE_FALSE(ev_loop::Spin{ loop }.poll());
 
     while (loop.get<TrackedOwnThreadReceiver1>().received.load() < 1) {
       std::this_thread::sleep_for(std::chrono::milliseconds(kPollDelayMs));
