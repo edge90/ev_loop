@@ -3,9 +3,6 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <memory>
 #include <thread>
 #include <tuple>
 #include <type_traits>
@@ -84,57 +81,8 @@ namespace detail {
 
   template<typename List, typename T> inline constexpr bool contains_v = contains<List, T>::value;
 
-  // Count occurrences of type T in type list (for ECS-style counting)
-  template<typename List, typename T> struct count_of;
-
-  template<typename T, typename... Ts>
-  struct count_of<type_list<Ts...>, T>
-    : std::integral_constant<std::size_t, ((std::is_same_v<T, Ts> ? 1 : 0) + ... + 0)>
-  {
-  };
-
-  template<typename List, typename T> inline constexpr std::size_t count_of_v = count_of<List, T>::value;
-
-  // Type list index lookup using O(1) fold expression
-  template<typename T, typename... Ts> struct index_of
-  {
-  private:
-    template<std::size_t... Is> static consteval std::size_t find(std::index_sequence<Is...> /*unused*/)
-    {
-      std::size_t result = sizeof...(Ts); // Invalid index if not found
-      // cppcheck-suppress redundantInitialization
-      // NOLINTNEXTLINE(readability-simplify-boolean-expr)
-      (void)((std::is_same_v<T, Ts> ? (result = Is, true) : false) || ...);
-      return result;
-    }
-
-  public:
-    static constexpr std::size_t value = find(std::make_index_sequence<sizeof...(Ts)>{});
-  };
-
-  template<typename T, typename... Ts> inline constexpr std::size_t index_of_v = index_of<T, Ts...>::value;
-
   // Type at index
   template<std::size_t I, typename... Ts> using type_at_t = std::tuple_element_t<I, std::tuple<Ts...>>;
-
-  // Type-level search result (for fold-based searching)
-  template<std::size_t N> struct found_at
-  {
-    // cppcheck-suppress unusedStructMember
-    static constexpr std::size_t value = N;
-  };
-  struct not_found
-  {
-    // cppcheck-suppress unusedStructMember
-    static constexpr std::size_t value = ~std::size_t{ 0 };
-  };
-
-  // Fold operators for type-level search (first match wins)
-  template<std::size_t L> constexpr auto operator+(found_at<L>, auto) -> found_at<L>;
-
-  template<std::size_t R> constexpr auto operator+(not_found, found_at<R>) -> found_at<R>;
-
-  constexpr auto operator+(not_found, not_found) -> not_found;
 
   // Filter type list by predicate - forward declaration, implementation after concat_type_lists
   template<template<typename> class Pred, typename... Ts> struct filter_fold;
@@ -175,215 +123,6 @@ namespace detail {
   };
 
   template<typename Group> using group_strategy_t = typename group_strategy<Group>::type;
-
-  // =============================================================================
-  // Tagged union (faster than std::variant)
-  // =============================================================================
-
-  template<std::size_t... Vs> consteval std::size_t const_max()
-  {
-    std::size_t result = 0;
-    ((result = Vs > result ? Vs : result), ...);
-    return result;
-  }
-
-  // Select smallest unsigned type that can hold N event types + 1 (for uninitialized)
-  template<std::size_t N> struct tag_type_selector
-  {
-    static_assert(N < std::numeric_limits<std::uint32_t>::max(), "Too many event types (max ~4 billion)");
-    using type = std::conditional_t < N < std::numeric_limits<std::uint8_t>::max(), std::uint8_t,
-          std::conditional_t<N<std::numeric_limits<std::uint16_t>::max(), std::uint16_t, std::uint32_t>>;
-  };
-
-  template<std::size_t N> using tag_type_t = typename tag_type_selector<N>::type;
-
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init) - storage is raw bytes, initialized via placement new
-  template<typename... Events> class TaggedEvent
-  {
-    using tag_type = tag_type_t<sizeof...(Events)>;
-    static constexpr tag_type uninitialized_tag = std::numeric_limits<tag_type>::max();
-    static constexpr std::size_t storage_size = sizeof...(Events) == 0 ? 1 : const_max<sizeof(Events)...>();
-    static constexpr std::size_t storage_align = sizeof...(Events) == 0 ? 1 : const_max<alignof(Events)...>();
-    static constexpr bool all_trivial = (std::is_trivially_copyable_v<Events> && ...);
-
-    // MSVC C4324: structure was padded due to alignment specifier
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4324)
-#endif
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
-    alignas(storage_align) std::array<std::byte, storage_size> storage;
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-    tag_type tag = uninitialized_tag;
-
-  public:
-    TaggedEvent() = default;
-
-    ~TaggedEvent() { destroy(); }
-
-    // cppcheck-suppress missingMemberCopy ; storage is initialized via placement new in copy_construct_from
-    TaggedEvent(const TaggedEvent& other) : tag(other.tag)
-    {
-      if (tag != uninitialized_tag) { copy_construct_from(other); }
-    }
-
-    // cppcheck-suppress missingMemberCopy ; storage is initialized via placement new in move_construct_from
-    TaggedEvent(TaggedEvent&& other) noexcept : tag(other.tag)
-    {
-      if (tag != uninitialized_tag) {
-        move_construct_from(std::move(other));
-        // cppcheck-suppress accessMoved ; destroy() only resets tag, safe on moved-from object
-        other.destroy();
-      }
-    }
-
-    // cppcheck-suppress operatorEqVarError ; storage is initialized via placement new in copy_construct_from
-    TaggedEvent& operator=(const TaggedEvent& other)
-    {
-      if (this != &other) {
-        destroy();
-        tag = other.tag;
-        if (tag != uninitialized_tag) { copy_construct_from(other); }
-      }
-      return *this;
-    }
-
-    // cppcheck-suppress operatorEqVarError ; storage is initialized via placement new in move_construct_from
-    TaggedEvent& operator=(TaggedEvent&& other) noexcept
-    {
-      if (this != &other) {
-        destroy();
-        tag = other.tag;
-        if (tag != uninitialized_tag) {
-          move_construct_from(std::move(other));
-          // cppcheck-suppress accessMoved ; destroy() only resets tag, safe on moved-from object
-          other.destroy();
-        }
-      }
-      return *this;
-    }
-
-    // Direct construction - avoids default init + store() overhead.
-    // Uses std::construct_at with parentheses (not braces) to avoid initializer_list ambiguity.
-    template<typename E>
-      requires(contains_v<type_list<Events...>, std::decay_t<E>>)
-    explicit TaggedEvent(E&& event) : tag(index_of_v<std::decay_t<E>, Events...>)
-    {
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      std::construct_at(reinterpret_cast<std::decay_t<E>*>(storage.data()), std::forward<E>(event));
-    }
-
-    template<typename E> void store(E&& event)
-    {
-      destroy();
-      using Decayed = std::decay_t<E>;
-      tag = index_of_v<Decayed, Events...>;
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      std::construct_at(reinterpret_cast<Decayed*>(storage.data()), std::forward<E>(event));
-    }
-
-    // cppcheck-suppress functionStatic ; explicit object parameter functions cannot be static
-    template<std::size_t I, typename Self> auto& get(this Self& self)
-    {
-      using Base = type_at_t<I, Events...>;
-      using T = std::conditional_t<std::is_const_v<Self>, const Base, Base>;
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      return *reinterpret_cast<T*>(self.storage.data());
-    }
-
-    [[nodiscard]] constexpr std::size_t index() const noexcept { return tag; }
-
-  private:
-    void destroy()
-    {
-      if constexpr (!all_trivial) {
-        if (tag != uninitialized_tag) { destroy_at_index(std::make_index_sequence<sizeof...(Events)>{}); }
-      }
-      tag = uninitialized_tag;
-    }
-
-    template<std::size_t... Is> void destroy_at_index(std::index_sequence<Is...> /*unused*/)
-    {
-      // cppcheck-suppress unreadVariable ; used by EV_ASSUME
-      const bool dispatched = ((tag == Is ? (destroy_type<Is>(), true) : false) || ...);
-      EV_ASSUME(dispatched);
-    }
-
-    template<std::size_t I> void destroy_type()
-    {
-      using T = type_at_t<I, Events...>;
-      if constexpr (!std::is_trivially_destructible_v<T>) {
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-        std::destroy_at(reinterpret_cast<T*>(storage.data()));
-      }
-    }
-
-    void copy_construct_from(const TaggedEvent& other)
-    {
-      copy_at_index(other, std::make_index_sequence<sizeof...(Events)>{});
-    }
-
-    template<std::size_t... Is> void copy_at_index(const TaggedEvent& other, std::index_sequence<Is...> /*unused*/)
-    {
-      // cppcheck-suppress unreadVariable ; used by EV_ASSUME
-      const bool dispatched = ((tag == Is ? (copy_type<Is>(other), true) : false) || ...);
-      EV_ASSUME(dispatched);
-    }
-
-    template<std::size_t I> void copy_type(const TaggedEvent& other)
-    {
-      using T = type_at_t<I, Events...>;
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      std::construct_at(reinterpret_cast<T*>(storage.data()), *reinterpret_cast<const T*>(other.storage.data()));
-    }
-
-    void move_construct_from(TaggedEvent&& other)
-    {
-      move_at_index(std::move(other), std::make_index_sequence<sizeof...(Events)>{});
-    }
-
-    template<std::size_t... Is> void move_at_index(TaggedEvent&& other, std::index_sequence<Is...> /*unused*/)
-    {
-      // cppcheck-suppress unreadVariable ; used by EV_ASSUME
-      const bool dispatched = ((tag == Is ? (move_type<Is>(std::move(other)), true) : false) || ...);
-      EV_ASSUME(dispatched);
-    }
-
-    // NOLINTNEXTLINE(cppcoreguidelines-rvalue-reference-param-not-moved)
-    template<std::size_t I> void move_type(TaggedEvent&& other)
-    {
-      using T = type_at_t<I, Events...>;
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      std::construct_at(reinterpret_cast<T*>(storage.data()), std::move(*reinterpret_cast<T*>(other.storage.data())));
-    }
-  };
-
-  // Convert type_list to tagged event
-  template<typename List> struct to_tagged_event;
-
-  template<typename... Ts> struct to_tagged_event<type_list<Ts...>>
-  {
-    using type = TaggedEvent<Ts...>;
-  };
-
-  template<typename List> using to_tagged_event_t = typename to_tagged_event<List>::type;
-
-  // Fast tagged event dispatch using fold expression
-  template<typename Tagged, typename Func, std::size_t... Is>
-  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  constexpr void fast_dispatch_impl(Tagged& tagged, Func&& func, std::index_sequence<Is...> /*unused*/)
-  {
-    // cppcheck-suppress unreadVariable ; used by EV_ASSUME
-    const bool dispatched = ((tagged.index() == Is ? (func(tagged.template get<Is>()), true) : false) || ...);
-    EV_ASSUME(dispatched);
-  }
-
-  template<typename... Events, typename Func> constexpr void fast_dispatch(TaggedEvent<Events...>& tagged, Func&& func)
-  {
-    fast_dispatch_impl(tagged, std::forward<Func>(func), std::make_index_sequence<sizeof...(Events)>{});
-  }
 
   // =============================================================================
   // Concepts for receiver/emitter detection
@@ -534,10 +273,6 @@ namespace detail {
 #pragma warning(pop)
 #endif
   };
-
-  // Backwards compatibility alias
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  template<typename T, std::size_t Capacity = 4096> using Outbox = Inbox<T, Capacity>;
 
   // =============================================================================
   // GroupWorkSignal: notification primitive for inter-group communication
@@ -778,66 +513,6 @@ namespace detail {
   };
 
   // =============================================================================
-  // GroupOutboxes: per-group outbox management for inter-group communication
-  // Each group has one outbox per destination group (pull-based model)
-  // =============================================================================
-
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  template<std::size_t GroupCount, typename TaggedEvent, std::size_t Capacity = 4096> class GroupOutboxes
-  {
-    static_assert(GroupCount > 0, "Must have at least one group");
-
-  public:
-    // Push an event to a specific destination group's outbox
-    // Returns false if the outbox is full
-    template<std::size_t DestGroup> bool push(TaggedEvent event)
-    {
-      static_assert(DestGroup < GroupCount, "Destination group index out of bounds");
-      return outboxes_[DestGroup].push(std::move(event));
-    }
-
-    // Push to destination group by runtime index
-    bool push_to(std::size_t dest_group, TaggedEvent event)
-    {
-      if (dest_group >= GroupCount) [[unlikely]] { return false; }
-      return outboxes_[dest_group].push(std::move(event));
-    }
-
-    // Get outbox for a specific destination (for direct access)
-    template<std::size_t DestGroup> [[nodiscard]] Outbox<TaggedEvent, Capacity>& outbox() noexcept
-    {
-      static_assert(DestGroup < GroupCount, "Destination group index out of bounds");
-      return outboxes_[DestGroup];
-    }
-
-    template<std::size_t DestGroup> [[nodiscard]] const Outbox<TaggedEvent, Capacity>& outbox() const noexcept
-    {
-      static_assert(DestGroup < GroupCount, "Destination group index out of bounds");
-      return outboxes_[DestGroup];
-    }
-
-    // Check if any outbox has pending events
-    [[nodiscard]] bool any_pending() const noexcept
-    {
-      for (const auto& outbox : outboxes_) {
-        if (!outbox.empty()) { return true; }
-      }
-      return false;
-    }
-
-    // Get total pending count across all outboxes
-    [[nodiscard]] std::size_t total_pending() const noexcept
-    {
-      std::size_t total = 0;
-      for (const auto& outbox : outboxes_) { total += outbox.size(); }
-      return total;
-    }
-
-  private:
-    std::array<Outbox<TaggedEvent, Capacity>, GroupCount> outboxes_;
-  };
-
-  // =============================================================================
   // GroupDispatcher: allows receivers to emit events to other groups
   // =============================================================================
 
@@ -902,11 +577,6 @@ namespace detail {
   // Unique type list (deduplication) - O(N^2) but N is typically small
   // =============================================================================
 
-  // Check if T is already in Seen list
-  template<typename T, typename Seen> struct not_in_seen : std::bool_constant<!contains_v<Seen, T>>
-  {
-  };
-
   // Fold-based unique: accumulate unique types
   template<typename Seen, typename T>
   using unique_accumulate =
@@ -957,16 +627,6 @@ namespace detail {
   };
 
   template<typename Group> using group_all_events_t = typename group_all_events<Group>::type;
-
-  // Collect all events emitted by receivers in a group
-  template<typename Group> struct group_emitted_events;
-
-  template<typename Strategy, typename... Receivers> struct group_emitted_events<ThreadGroup<Strategy, Receivers...>>
-  {
-    using type = typename concat_type_lists<get_emits_t<Receivers>...>::type;
-  };
-
-  template<typename Group> using group_emitted_events_t = typename group_emitted_events<Group>::type;
 
   // Check if a group handles a specific event
   template<typename Group, typename Event> struct group_handles_event;
@@ -1083,10 +743,6 @@ template<typename... Groups> class GroupEventLoop
 public:
   using self_type = GroupEventLoop<Groups...>;
   static constexpr std::size_t group_count = sizeof...(Groups);
-
-  // Collect all events handled across all groups
-  using all_events = typename detail::concat_type_lists<detail::group_all_events_t<Groups>...>::type;
-  using tagged_event = detail::to_tagged_event_t<all_events>;
 
   GroupEventLoop() = default;
   ~GroupEventLoop() { stop(); }

@@ -27,18 +27,3 @@ TEST_CASE("contains_v is computed at compile time", "[type_list][constexpr]")
     STATIC_REQUIRE_FALSE(ev_loop::detail::contains_v<list, long>);
   }
 }
-
-TEST_CASE("index_of_v is computed at compile time", "[type_list][constexpr]")
-{
-  SECTION("first element") { STATIC_REQUIRE(ev_loop::detail::index_of_v<int, int, float, double> == 0); }
-  SECTION("middle element") { STATIC_REQUIRE(ev_loop::detail::index_of_v<float, int, float, double> == 1); }
-  SECTION("last element") { STATIC_REQUIRE(ev_loop::detail::index_of_v<double, int, float, double> == 2); }
-}
-
-TEST_CASE("const_max computes maximum at compile time", "[type_list][constexpr]")
-{
-  SECTION("ascending") { STATIC_REQUIRE(ev_loop::detail::const_max<1, 2, 3>() == 3); }
-  SECTION("descending") { STATIC_REQUIRE(ev_loop::detail::const_max<3, 2, 1>() == 3); }
-  SECTION("single value") { STATIC_REQUIRE(ev_loop::detail::const_max<5>() == 5); }
-  SECTION("max in middle") { STATIC_REQUIRE(ev_loop::detail::const_max<1, 100, 50>() == 100); }
-}

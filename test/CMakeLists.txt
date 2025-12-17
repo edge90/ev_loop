@@ -22,7 +22,6 @@ include(${Catch2_SOURCE_DIR}/extras/Catch.cmake)
 # Unit tests (runtime only)
 add_executable(tests)
 target_sources(tests PRIVATE
-    test_tagged_event.cpp
     test_group_event_loop.cpp
     test_utils.cpp
 )
@@ -67,7 +66,6 @@ endfunction()
 # Constexpr test sources
 set(CONSTEXPR_TEST_SOURCES
     test_type_list_constexpr.cpp
-    test_tagged_event_constexpr.cpp
 )
 
 # Constexpr tests - STATIC_REQUIRE runs as compile-time static_assert

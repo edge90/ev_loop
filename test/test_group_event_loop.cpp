@@ -14,7 +14,6 @@
 // NOLINTEND(misc-include-cleaner)
 
 namespace {
-constexpr int kTestIterations = 100;
 constexpr int kShortSleepMs = 10;
 constexpr int kTestValue1 = 10;
 constexpr int kTestValue2 = 20;
@@ -22,8 +21,6 @@ constexpr int kTestValue3 = 30;
 constexpr int kTestValue4 = 42;
 constexpr int kTestValue5 = 100;
 constexpr int kTestValue6 = 200;
-constexpr int kTestValue7 = 999;
-constexpr int kTestValue8 = 1000;
 } // namespace
 
 // =============================================================================
@@ -280,53 +277,6 @@ TEST_CASE("GroupStorage access by index", "[group_event_loop]")
 }
 
 // =============================================================================
-// Outbox tests
-// =============================================================================
-
-TEST_CASE("Outbox empty state", "[group_event_loop]")
-{
-  const ev_loop::detail::Outbox<int> outbox;
-  REQUIRE(outbox.empty());
-}
-
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_CASE("Outbox push and drain", "[group_event_loop]")
-{
-  ev_loop::detail::Outbox<int> outbox;
-
-  REQUIRE(outbox.push(1));
-  REQUIRE(outbox.push(2));
-  REQUIRE(outbox.push(3));
-
-  REQUIRE_FALSE(outbox.empty());
-  REQUIRE(outbox.size() == 3);
-
-  int sum = 0;
-  auto count = outbox.drain([&sum](int& val) { sum += val; });
-
-  REQUIRE(count == 3);
-  REQUIRE(sum == 6);
-  REQUIRE(outbox.empty());
-}
-
-TEST_CASE("Outbox multiple drain cycles", "[group_event_loop]")
-{
-  ev_loop::detail::Outbox<int> outbox;
-
-  for (int idx = 0; idx < kTestIterations; ++idx) { REQUIRE(outbox.push(idx)); }
-
-  int sum = 0;
-  outbox.drain([&sum](int& val) { sum += val; });
-  REQUIRE(sum == (kTestIterations - 1) * kTestIterations / 2);
-
-  // Push more after drain
-  REQUIRE(outbox.push(kTestValue8));
-  sum = 0;
-  outbox.drain([&sum](int& val) { sum += val; });
-  REQUIRE(sum == kTestValue8);
-}
-
-// =============================================================================
 // GroupWorkSignal tests
 // =============================================================================
 
@@ -368,54 +318,6 @@ TEST_CASE("GroupWorkSignal reset", "[group_event_loop]")
   REQUIRE(signal.is_stopped());
   signal.reset();
   REQUIRE_FALSE(signal.is_stopped());
-}
-
-// =============================================================================
-// GroupOutboxes tests
-// =============================================================================
-
-TEST_CASE("GroupOutboxes push to destination", "[group_event_loop]")
-{
-  ev_loop::detail::GroupOutboxes<3, int> outboxes;
-
-  REQUIRE(outboxes.push<0>(kTestValue1));
-  REQUIRE(outboxes.push<1>(kTestValue2));
-  REQUIRE(outboxes.push<2>(kTestValue3));
-
-  REQUIRE(outboxes.outbox<0>().size() == 1);
-  REQUIRE(outboxes.outbox<1>().size() == 1);
-  REQUIRE(outboxes.outbox<2>().size() == 1);
-}
-
-TEST_CASE("GroupOutboxes any_pending", "[group_event_loop]")
-{
-  ev_loop::detail::GroupOutboxes<3, int> outboxes;
-
-  REQUIRE_FALSE(outboxes.any_pending());
-  outboxes.push<1>(kTestValue4);
-  REQUIRE(outboxes.any_pending());
-}
-
-TEST_CASE("GroupOutboxes total_pending", "[group_event_loop]")
-{
-  ev_loop::detail::GroupOutboxes<3, int> outboxes;
-
-  outboxes.push<0>(1);
-  outboxes.push<0>(2);
-  outboxes.push<1>(3);
-  REQUIRE(outboxes.total_pending() == 3);
-}
-
-TEST_CASE("GroupOutboxes push_to runtime index", "[group_event_loop]")
-{
-  ev_loop::detail::GroupOutboxes<3, int> outboxes;
-
-  REQUIRE(outboxes.push_to(0, kTestValue5));
-  REQUIRE(outboxes.push_to(2, kTestValue6));
-  REQUIRE_FALSE(outboxes.push_to(kTestValue1, kTestValue7)); // Out of bounds
-
-  REQUIRE(outboxes.outbox<0>().size() == 1);
-  REQUIRE(outboxes.outbox<2>().size() == 1);
 }
 
 // =============================================================================
