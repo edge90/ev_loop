@@ -23,14 +23,7 @@ include(${Catch2_SOURCE_DIR}/extras/Catch.cmake)
 add_executable(tests)
 target_sources(tests PRIVATE
     test_tagged_event.cpp
-    test_queue.cpp
-    test_event_loop.cpp
-    test_strategies.cpp
-    test_shared_event_loop_ptr.cpp
-    test_external_emitter.cpp
-    test_builder.cpp
-    test_move_optimization.cpp
-    test_threaded.cpp
+    test_group_event_loop.cpp
     test_utils.cpp
 )
 target_link_libraries(tests
@@ -75,12 +68,6 @@ endfunction()
 set(CONSTEXPR_TEST_SOURCES
     test_type_list_constexpr.cpp
     test_tagged_event_constexpr.cpp
-    test_queue_constexpr.cpp
-    test_event_loop_constexpr.cpp
-    test_strategies_constexpr.cpp
-    test_shared_event_loop_ptr_constexpr.cpp
-    test_external_emitter_constexpr.cpp
-    test_builder_constexpr.cpp
 )
 
 # Constexpr tests - STATIC_REQUIRE runs as compile-time static_assert
@@ -89,13 +76,6 @@ add_test_executable(constexpr_tests "constexpr" ${CONSTEXPR_TEST_SOURCES})
 # Relaxed constexpr tests - STATIC_REQUIRE runs as runtime REQUIRE (for debugging)
 add_test_executable(relaxed_tests "relaxed" ${CONSTEXPR_TEST_SOURCES})
 target_compile_definitions(relaxed_tests PRIVATE CATCH_CONFIG_RUNTIME_STATIC_REQUIRE)
-
-# Compile-failure test: verifies that duplicate receivers trigger static_assert
-add_executable(test_builder_duplicate_fail EXCLUDE_FROM_ALL test_builder_duplicate_fail.cpp)
-target_link_libraries(test_builder_duplicate_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME builder_duplicate_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_builder_duplicate_fail)
-set_tests_properties(builder_duplicate_should_fail PROPERTIES WILL_FAIL TRUE)
 
 # Compile-failure test: verifies that tag_type_t rejects N >= uint32_t max
 add_executable(test_tag_type_overflow_fail EXCLUDE_FROM_ALL test_tag_type_overflow_fail.cpp)

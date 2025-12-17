@@ -150,7 +150,7 @@ int main()
   loop.emit(StartEvent{ 2 });
 
   // Process events
-  ev_loop::Spin strategy{ loop };
+  ev_loop::SpinRunner strategy{ loop };
   while (strategy.poll()) {}
 
   // Give threaded receiver time

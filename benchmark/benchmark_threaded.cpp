@@ -194,7 +194,7 @@ void benchmark_samethread_to_ownthread()
     loop.emit(Ping{ 0 });
     const auto started = steady_clock::now();
 
-    ev_loop::Spin{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
+    ev_loop::SpinRunner{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
     const auto elapsed = steady_clock::now() - started;
     loop.stop();
@@ -209,7 +209,7 @@ void benchmark_samethread_to_ownthread()
     loop.emit(Ping{ 0 });
     const auto started = steady_clock::now();
 
-    ev_loop::Yield{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
+    ev_loop::YieldRunner{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
     const auto elapsed = steady_clock::now() - started;
     loop.stop();
@@ -224,7 +224,7 @@ void benchmark_samethread_to_ownthread()
     loop.emit(Ping{ 0 });
     const auto started = steady_clock::now();
 
-    ev_loop::Wait{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
+    ev_loop::WaitRunner{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
 
     const auto elapsed = steady_clock::now() - started;
     loop.stop();
@@ -247,7 +247,7 @@ void benchmark_ownthread_to_samethread()
     loop.emit(Pong{ 0 });
     const auto started = steady_clock::now();
 
-    ev_loop::Spin{ loop }.run_while(
+    ev_loop::SpinRunner{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
     const auto elapsed = steady_clock::now() - started;
@@ -263,7 +263,7 @@ void benchmark_ownthread_to_samethread()
     loop.emit(Pong{ 0 });
     const auto started = steady_clock::now();
 
-    ev_loop::Yield{ loop }.run_while(
+    ev_loop::YieldRunner{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
     const auto elapsed = steady_clock::now() - started;
@@ -279,7 +279,7 @@ void benchmark_ownthread_to_samethread()
     loop.emit(Pong{ 0 });
     const auto started = steady_clock::now();
 
-    ev_loop::Wait{ loop }.run_while(
+    ev_loop::WaitRunner{ loop }.run_while(
       [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
 
     const auto elapsed = steady_clock::now() - started;

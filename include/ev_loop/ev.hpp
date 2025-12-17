@@ -2,15 +2,10 @@
 
 #include <array>
 #include <atomic>
-#include <chrono>
-#include <concepts>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <mutex>
-#include <queue>
 #include <thread>
 #include <tuple>
 #include <type_traits>
@@ -35,59 +30,47 @@ template<typename... Ts> struct type_list
   static constexpr std::size_t size = sizeof...(Ts);
 };
 
-// Tag types for thread mode specification via type alias
-// Usage: using thread_mode = ev_loop::SameThread;
-struct SameThread
+// =============================================================================
+// Strategy tag types for ThreadGroup
+// =============================================================================
+
+struct Spin
 {
 };
-struct OwnThread
+struct Wait
 {
+};
+struct Yield
+{
+};
+struct Hybrid
+{
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+  std::size_t spin_count = 1000;
 };
 
 // =============================================================================
-// Forward declarations
+// ThreadGroup - groups receivers that share a thread with a strategy
 // =============================================================================
 
-template<typename... Receivers> class EventLoop;
+template<typename Strategy, typename... Receivers> struct ThreadGroup
+{
+  using strategy = Strategy;
+  using receivers = type_list<Receivers...>;
+  static constexpr std::size_t receiver_count = sizeof...(Receivers);
+};
 
-template<typename... Receivers> class SharedEventLoopPtr;
-
-template<typename EmitterType, typename EventLoopType> class TypedExternalEmitter;
-
-template<typename EmitterType, typename EventLoopType> class SameThreadTypedDispatcher;
-
-template<typename EmitterType, typename EventLoopType> class OwnThreadTypedDispatcher;
+// Convenience aliases
+template<typename... Receivers> using SpinGroup = ThreadGroup<Spin, Receivers...>;
+template<typename... Receivers> using WaitGroup = ThreadGroup<Wait, Receivers...>;
+template<typename... Receivers> using YieldGroup = ThreadGroup<Yield, Receivers...>;
+template<typename... Receivers> using HybridGroup = ThreadGroup<Hybrid, Receivers...>;
 
 // =============================================================================
 // Implementation details
 // =============================================================================
 
 namespace detail {
-
-  // Portable CPU pause hint for spin loops
-  // LCOV_EXCL_START - inline assembly not trackable by coverage tools
-  inline void cpu_pause() noexcept
-  {
-// NOLINTBEGIN(readability-use-concise-preprocessor-directives) - multi-condition checks
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-#ifdef _MSC_VER
-    _mm_pause();
-#else
-    __builtin_ia32_pause();
-#endif
-#elif defined(__aarch64__) || defined(_M_ARM64)
-#ifdef _MSC_VER
-    __yield();
-#else
-    __asm__ volatile("yield" ::: "memory");
-#endif
-#else
-    // Fallback: no-op or minimal delay
-    std::atomic_signal_fence(std::memory_order_seq_cst);
-#endif
-    // NOLINTEND(readability-use-concise-preprocessor-directives)
-  }
-  // LCOV_EXCL_STOP
 
   template<typename List, typename T> struct contains : std::false_type
   {
@@ -157,6 +140,41 @@ namespace detail {
   template<template<typename> class Pred, typename... Ts> struct filter_fold;
   template<template<typename> class Pred, typename List> struct filter_list;
 
+  // =============================================================================
+  // ThreadGroup type traits
+  // =============================================================================
+
+  // Detect if T is a ThreadGroup
+  template<typename T> struct is_thread_group : std::false_type
+  {
+  };
+
+  template<typename Strategy, typename... Receivers>
+  struct is_thread_group<ThreadGroup<Strategy, Receivers...>> : std::true_type
+  {
+  };
+
+  template<typename T> inline constexpr bool is_thread_group_v = is_thread_group<T>::value;
+
+  // Extract receivers type_list from a ThreadGroup
+  template<typename Group> struct group_receivers;
+
+  template<typename Strategy, typename... Receivers> struct group_receivers<ThreadGroup<Strategy, Receivers...>>
+  {
+    using type = type_list<Receivers...>;
+  };
+
+  template<typename Group> using group_receivers_t = typename group_receivers<Group>::type;
+
+  // Extract strategy from a ThreadGroup
+  template<typename Group> struct group_strategy;
+
+  template<typename Strategy, typename... Receivers> struct group_strategy<ThreadGroup<Strategy, Receivers...>>
+  {
+    using type = Strategy;
+  };
+
+  template<typename Group> using group_strategy_t = typename group_strategy<Group>::type;
 
   // =============================================================================
   // Tagged union (faster than std::variant)
@@ -368,47 +386,6 @@ namespace detail {
   }
 
   // =============================================================================
-  // Ring buffer (faster than std::queue)
-  // =============================================================================
-
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  template<typename T, std::size_t Capacity = 4096> class RingBuffer
-  {
-    static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2");
-    static constexpr std::size_t mask_ = Capacity - 1;
-
-  public:
-    bool push(T&& event)
-    {
-      if (size() >= Capacity) [[unlikely]] { return false; }
-      buffer_[tail_++ & mask_] = std::move(event);
-      return true;
-    }
-
-    // Get slot for in-place construction, then call commit_push()
-    [[nodiscard]] T* alloc_slot()
-    {
-      if (size() >= Capacity) [[unlikely]] { return nullptr; }
-      return &buffer_[tail_ & mask_];
-    }
-    void commit_push() noexcept { ++tail_; }
-
-    [[nodiscard]] T* try_pop()
-    {
-      if (head_ == tail_) [[unlikely]] { return nullptr; }
-      return &buffer_[head_++ & mask_];
-    }
-
-    [[nodiscard]] constexpr bool empty() const noexcept { return head_ == tail_; }
-    [[nodiscard]] constexpr std::size_t size() const noexcept { return tail_ - head_; }
-
-  private:
-    std::array<T, Capacity> buffer_{};
-    std::size_t head_ = 0;
-    std::size_t tail_ = 0;
-  };
-
-  // =============================================================================
   // Concepts for receiver/emitter detection
   // =============================================================================
 
@@ -417,31 +394,6 @@ namespace detail {
 
   template<typename T>
   concept has_emits = requires { typename T::emits; };
-
-  template<typename T>
-  concept has_thread_mode = requires { typename T::thread_mode; };
-
-  // Thread mode type traits - check if type uses SameThread or OwnThread
-  // Use struct specialization to avoid accessing T::thread_mode when it doesn't exist
-  template<typename T, bool HasMode = has_thread_mode<T>> struct is_same_thread : std::true_type
-  {
-  };
-
-  template<typename T> struct is_same_thread<T, true> : std::is_same<typename T::thread_mode, SameThread>
-  {
-  };
-
-  template<typename T> inline constexpr bool is_same_thread_v = is_same_thread<T>::value;
-
-  template<typename T, bool HasMode = has_thread_mode<T>> struct is_own_thread : std::false_type
-  {
-  };
-
-  template<typename T> struct is_own_thread<T, true> : std::is_same<typename T::thread_mode, OwnThread>
-  {
-  };
-
-  template<typename T> inline constexpr bool is_own_thread_v = is_own_thread<T>::value;
 
   // Get receives type list, defaults to empty
   template<typename T> struct get_receives
@@ -485,23 +437,6 @@ namespace detail {
   template<typename Emitter, typename Event>
   concept can_emit = is_external_emitter<Emitter> && contains_v<get_emits_t<Emitter>, std::decay_t<Event>>;
 
-  // Event-specific receiver predicates for ECS-style filtering
-  // Usage: filter_list_t<same_thread_receiver_for<Event>::template pred, receiver_list>
-  template<typename Event> struct same_thread_receiver_for
-  {
-    template<typename R>
-    struct pred : std::bool_constant<is_receiver<R> && is_same_thread_v<R> && can_receive<R, Event>>
-    {
-    };
-  };
-
-  template<typename Event> struct own_thread_receiver_for
-  {
-    template<typename R> struct pred : std::bool_constant<is_receiver<R> && is_own_thread_v<R> && can_receive<R, Event>>
-    {
-    };
-  };
-
   // Get size of type_list
   template<typename List> struct type_list_size;
 
@@ -521,548 +456,406 @@ namespace detail {
 
   template<std::size_t I, typename List> using type_list_at_t = typename type_list_at<I, List>::type;
 
-  // =============================================================================
-  // SPSC queue - lock-free for maximum throughput
-  // =============================================================================
-
   // Cache line size for padding to avoid false sharing
   inline constexpr std::size_t cache_line_size = 64;
 
-  namespace spsc {
+  // =============================================================================
+  // Inbox: atomic ring buffer for cross-thread communication
+  // Other groups and external emitters push here, owning group drains
+  // =============================================================================
 
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-    template<typename T, std::size_t Capacity = 4096> class Queue
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+  template<typename T, std::size_t Capacity = 4096> class Inbox
+  {
+    static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2");
+    static constexpr std::size_t mask_ = Capacity - 1;
+
+  public:
+    // Push an event (producer side, may be called from other threads)
+    bool push(T event)
     {
-      static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2");
-      static constexpr std::size_t mask_ = Capacity - 1;
+      const std::size_t head = head_.load(std::memory_order_acquire);
+      const std::size_t tail = tail_.load(std::memory_order_relaxed);
+      if (tail - head >= Capacity) [[unlikely]] { return false; }
+      buffer_[tail & mask_] = std::move(event);
+      tail_.store(tail + 1, std::memory_order_release);
+      return true;
+    }
 
-    public:
-      bool push(T event)
-      {
-        const std::size_t head = head_.load(std::memory_order_acquire);
-        const std::size_t tail = tail_.load(std::memory_order_relaxed);
-        if (tail - head >= Capacity) [[unlikely]] { return false; }
-        buffer_[tail & mask_] = std::move(event);
-        tail_.store(tail + 1, std::memory_order_release);
-        signal_.fetch_add(1, std::memory_order_release);
-        signal_.notify_one();
-        return true;
+    // Try to pop a single event (consumer side)
+    bool try_pop(T& out)
+    {
+      const std::size_t tail = tail_.load(std::memory_order_acquire);
+      const std::size_t head = head_.load(std::memory_order_relaxed);
+      if (head >= tail) { return false; }
+      out = std::move(buffer_[head & mask_]);
+      head_.store(head + 1, std::memory_order_release);
+      return true;
+    }
+
+    // Drain all events, calling func for each (consumer side)
+    template<typename Func> std::size_t drain(Func&& func)
+    {
+      const std::size_t tail = tail_.load(std::memory_order_acquire);
+      std::size_t head = head_.load(std::memory_order_relaxed);
+      const std::size_t count = tail - head;
+
+      for (std::size_t i = 0; i < count; ++i) {
+        std::forward<Func>(func)(buffer_[head & mask_]);
+        ++head;
       }
 
-      [[nodiscard]] T* try_pop()
-      {
-        const std::size_t head = head_.load(std::memory_order_relaxed);
-        if (head == tail_.load(std::memory_order_acquire)) { return nullptr; }
-        current_ = std::move(buffer_[head & mask_]);
-        head_.store(head + 1, std::memory_order_release);
-        return &current_;
-      }
+      head_.store(head, std::memory_order_release);
+      return count;
+    }
 
-      [[nodiscard]] T* pop_spin()
-      {
-        const std::size_t head = head_.load(std::memory_order_relaxed);
-        std::size_t tail = tail_.load(std::memory_order_acquire);
-        // LCOV_EXCL_START - spin loop iteration counts confuse coverage tools
-        while (head == tail) {
-          if (stop_.load(std::memory_order_relaxed)) [[unlikely]] { return nullptr; }
-          cpu_pause();
-          tail = tail_.load(std::memory_order_acquire);
-        }
-        // LCOV_EXCL_STOP
-        current_ = std::move(buffer_[head & mask_]);
-        head_.store(head + 1, std::memory_order_release);
-        return &current_;
-      }
+    // Check if empty (consumer side)
+    [[nodiscard]] bool empty() const noexcept
+    {
+      return head_.load(std::memory_order_acquire) == tail_.load(std::memory_order_acquire);
+    }
 
-      [[nodiscard]] T* pop_wait()
-      {
-        constexpr int spin_iterations = 1000;
-        while (true) {
-          // Spin phase - fast path under load
-          for (int i = 0; i < spin_iterations; ++i) {
-            if (stop_.load(std::memory_order_relaxed)) [[unlikely]] { return nullptr; }
-            const std::size_t head = head_.load(std::memory_order_relaxed);
-            const std::size_t tail = tail_.load(std::memory_order_acquire);
-            if (head != tail) {
-              current_ = std::move(buffer_[head & mask_]);
-              head_.store(head + 1, std::memory_order_release);
-              return &current_;
-            }
-            cpu_pause();
-          }
-          // Wait phase - save CPU when idle
-          if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return nullptr; }
-          const auto sig = signal_.load(std::memory_order_acquire);
-          const std::size_t head = head_.load(std::memory_order_relaxed);
-          const std::size_t tail = tail_.load(std::memory_order_acquire);
-          if (head != tail) { continue; } // Data arrived during check
-          signal_.wait(sig, std::memory_order_acquire);
-        }
-      }
+    [[nodiscard]] std::size_t size() const noexcept
+    {
+      const std::size_t tail = tail_.load(std::memory_order_acquire);
+      const std::size_t head = head_.load(std::memory_order_acquire);
+      return tail - head;
+    }
 
-      // cppcheck-suppress functionStatic ; interface consistency with mpsc::Queue
-      void notify() { /* No-op for lock-free */ }
-
-      void stop()
-      {
-        stop_.store(true, std::memory_order_release);
-        signal_.fetch_add(1, std::memory_order_release);
-        signal_.notify_all();
-      }
-
-      [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
-
-    private:
-      // MSVC C4324: structure was padded due to alignment specifier (intentional for cache line separation)
+  private:
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4324)
 #endif
-      alignas(cache_line_size) std::array<T, Capacity> buffer_{};
-      alignas(cache_line_size) T current_{};
-      alignas(cache_line_size) std::atomic<std::size_t> head_{ 0 };
-      alignas(cache_line_size) std::atomic<std::size_t> tail_{ 0 };
-      alignas(cache_line_size) std::atomic<std::size_t> signal_{ 0 };
-      alignas(cache_line_size) std::atomic<bool> stop_{ false };
+    alignas(cache_line_size) std::array<T, Capacity> buffer_{};
+    alignas(cache_line_size) std::atomic<std::size_t> head_{ 0 };
+    alignas(cache_line_size) std::atomic<std::size_t> tail_{ 0 };
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    };
+  };
 
-  } // namespace spsc
+  // Backwards compatibility alias
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+  template<typename T, std::size_t Capacity = 4096> using Outbox = Inbox<T, Capacity>;
 
   // =============================================================================
-  // MPSC queue - mutex-based for multiple producers
+  // GroupWorkSignal: notification primitive for inter-group communication
+  // Producer groups signal, consumer groups wait or poll
   // =============================================================================
 
-  // Number of pause iterations in spin loops before rechecking condition
-  inline constexpr int spin_pause_iterations = 32;
-
-  namespace mpsc {
-
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-    template<typename T, std::size_t Capacity = 4096> class Queue
+  class GroupWorkSignal
+  {
+  public:
+    // Producer calls this to signal that work is available
+    void notify_work_available() noexcept
     {
-      static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2");
-      static constexpr std::size_t mask_ = Capacity - 1;
+      signal_.fetch_add(1, std::memory_order_release);
+      signal_.notify_one();
+    }
 
-    public:
-      bool push(T event)
-      {
-        {
-          std::scoped_lock lock(mutex_);
-          if (tail_ - head_ >= Capacity) [[unlikely]] { return false; }
-          buffer_[tail_++ & mask_] = std::move(event);
-          has_data_.store(true, std::memory_order_release);
-        }
-        cv_.notify_one();
-        return true;
+    // Consumer blocks until work is signaled or stopped
+    // Returns false if stopped, true if work might be available
+    [[nodiscard]] bool wait_for_work() noexcept
+    {
+      if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return false; }
+      const auto sig = signal_.load(std::memory_order_acquire);
+      // Check stop again after loading signal (avoid lost wakeup)
+      if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return false; }
+      signal_.wait(sig, std::memory_order_acquire);
+      return !stop_.load(std::memory_order_acquire);
+    }
+
+    // Non-blocking check if work was signaled since last check
+    // Returns true if work might be available
+    [[nodiscard]] bool try_consume() noexcept
+    {
+      // Just check if there have been any signals - the actual work
+      // availability is determined by checking the outbox
+      return signal_.load(std::memory_order_acquire) > 0;
+    }
+
+    // Stop the signal, wake all waiters
+    void stop() noexcept
+    {
+      stop_.store(true, std::memory_order_release);
+      signal_.fetch_add(1, std::memory_order_release);
+      signal_.notify_all();
+    }
+
+    // Check if stopped
+    [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
+
+    // Reset signal state (for reuse)
+    void reset() noexcept
+    {
+      stop_.store(false, std::memory_order_release);
+      signal_.store(0, std::memory_order_release);
+    }
+
+  private:
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
+    alignas(cache_line_size) std::atomic<std::size_t> signal_{ 0 };
+    alignas(cache_line_size) std::atomic<bool> stop_{ false };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+  };
+
+  // =============================================================================
+  // GroupStorage: holds receivers for a single ThreadGroup
+  // All receivers in a group share a thread, so no per-receiver wrapping needed
+  // =============================================================================
+
+  template<typename Group> class GroupStorage;
+
+  template<typename Strategy, typename... Receivers> class GroupStorage<ThreadGroup<Strategy, Receivers...>>
+  {
+  public:
+    using group_type = ThreadGroup<Strategy, Receivers...>;
+    using strategy_type = Strategy;
+    using receiver_tuple = std::tuple<Receivers...>;
+    static constexpr std::size_t receiver_count = sizeof...(Receivers);
+
+    // Default construction - receivers are default-constructed
+    GroupStorage() = default;
+
+    // Construction with specific receiver instances
+    explicit GroupStorage(Receivers... receivers) : receivers_(std::move(receivers)...) {}
+
+    // Access receiver by type
+    template<typename Receiver, typename Self> [[nodiscard]] auto& get(this Self& self) noexcept
+    {
+      static_assert(contains_v<type_list<Receivers...>, Receiver>, "Receiver not in this group");
+      return std::get<Receiver>(self.receivers_);
+    }
+
+    // Access receiver by index
+    template<std::size_t I, typename Self> [[nodiscard]] auto& get_at(this Self& self) noexcept
+    {
+      static_assert(I < receiver_count, "Index out of bounds");
+      return std::get<I>(self.receivers_);
+    }
+
+    // Get the underlying tuple
+    template<typename Self> [[nodiscard]] auto& receivers(this Self& self) noexcept { return self.receivers_; }
+
+  private:
+    receiver_tuple receivers_;
+  };
+
+  // =============================================================================
+  // GroupRunner: runs the event loop for a ThreadGroup with its strategy
+  // =============================================================================
+
+  // Forward declaration - will be specialized for each strategy
+  template<typename Group, std::size_t GroupIndex, typename EventLoopType> class GroupRunner;
+
+  // Base functionality shared by all group runners
+  template<typename Group, std::size_t GroupIndex, typename EventLoopType> class GroupRunnerBase
+  {
+  protected:
+    using storage_type = GroupStorage<Group>;
+    using strategy_type = typename Group::strategy;
+    static constexpr std::size_t group_index = GroupIndex;
+
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
+    EventLoopType& event_loop_;
+    GroupWorkSignal& signal_;
+    std::atomic<bool>& running_;
+
+  public:
+    GroupRunnerBase(EventLoopType& loop, GroupWorkSignal& sig, std::atomic<bool>& running) noexcept
+      : event_loop_(loop), signal_(sig), running_(running)
+    {}
+
+    [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
+
+    void stop() noexcept { signal_.stop(); }
+  };
+
+  // Strategy runner: runs with strategy-specific behavior
+  template<typename Strategy, typename... Receivers, std::size_t GroupIndex, typename EventLoopType>
+  class GroupRunner<ThreadGroup<Strategy, Receivers...>, GroupIndex, EventLoopType>
+    : public GroupRunnerBase<ThreadGroup<Strategy, Receivers...>, GroupIndex, EventLoopType>
+  {
+    using Base = GroupRunnerBase<ThreadGroup<Strategy, Receivers...>, GroupIndex, EventLoopType>;
+    using Group = ThreadGroup<Strategy, Receivers...>;
+
+  public:
+    using Base::Base;
+
+    // Single poll iteration - returns true if work was done
+    [[nodiscard]] bool poll() { return this->event_loop_.template poll_group<GroupIndex>(); }
+
+    // Run until stopped - strategy-specific behavior
+    void run()
+    {
+      if constexpr (std::is_same_v<Strategy, Spin>) {
+        run_spin();
+      } else if constexpr (std::is_same_v<Strategy, Wait>) {
+        run_wait();
+      } else if constexpr (std::is_same_v<Strategy, Yield>) {
+        run_yield();
+      } else if constexpr (std::is_same_v<Strategy, Hybrid>) {
+        run_hybrid();
       }
+    }
 
-      [[nodiscard]] T* try_pop()
-      {
-        if (!has_data_.load(std::memory_order_acquire)) { return nullptr; }
-        std::scoped_lock lock(mutex_);
-        // LCOV_EXCL_START - race condition: another thread consumed last item between flag check and lock
-        if (head_ == tail_) {
-          has_data_.store(false, std::memory_order_release);
-          return nullptr;
+    template<typename Predicate> void run_while(Predicate&& pred)
+    {
+      if constexpr (std::is_same_v<Strategy, Spin>) {
+        while (this->is_running() && pred()) { (void)poll(); }
+      } else if constexpr (std::is_same_v<Strategy, Wait>) {
+        while (this->is_running() && pred()) {
+          if (!poll()) { this->signal_.wait_for_work(); }
         }
-        // LCOV_EXCL_STOP
-        current_ = std::move(buffer_[head_++ & mask_]);
-        if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
-        return &current_;
+      } else if constexpr (std::is_same_v<Strategy, Yield>) {
+        while (this->is_running() && pred()) {
+          if (!poll()) { std::this_thread::yield(); }
+        }
+      } else if constexpr (std::is_same_v<Strategy, Hybrid>) {
+        run_hybrid_while(std::forward<Predicate>(pred));
       }
+    }
 
-      [[nodiscard]] T* pop_wait_for(std::chrono::milliseconds timeout)
-      {
-        if (has_data_.load(std::memory_order_acquire)) {
-          std::scoped_lock lock(mutex_);
-          if (head_ != tail_) {
-            current_ = std::move(buffer_[head_++ & mask_]);
-            if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
-            return &current_;
+  private:
+    void run_spin()
+    {
+      while (this->is_running()) { (void)poll(); }
+    }
+
+    void run_wait()
+    {
+      while (this->is_running()) {
+        if (!poll()) { this->signal_.wait_for_work(); }
+      }
+    }
+
+    void run_yield()
+    {
+      while (this->is_running()) {
+        if (!poll()) { std::this_thread::yield(); }
+      }
+    }
+
+    void run_hybrid()
+    {
+      constexpr std::size_t default_spin_count = 1000;
+      std::size_t empty_spins = 0;
+      while (this->is_running()) {
+        if (poll()) {
+          empty_spins = 0;
+        } else {
+          ++empty_spins;
+          if (empty_spins >= default_spin_count) {
+            empty_spins = 0;
+            this->signal_.wait_for_work();
           }
         }
-        std::unique_lock lock(mutex_);
-        if (!cv_.wait_for(lock, timeout, [this] { return head_ != tail_ || stop_; })) { return nullptr; }
-        if (stop_ && head_ == tail_) { return nullptr; }
-        current_ = std::move(buffer_[head_++ & mask_]);
-        if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
-        return &current_;
       }
+    }
 
-      [[nodiscard]] T* pop_spin()
-      {
-        // LCOV_EXCL_START - spin loop iteration counts confuse coverage tools
-        while (!has_data_.load(std::memory_order_acquire)) {
-          if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return nullptr; }
-          for (int i = 0; i < spin_pause_iterations; ++i) { cpu_pause(); }
-        }
-        // LCOV_EXCL_STOP
-        std::scoped_lock lock(mutex_);
-        if (head_ == tail_) { return nullptr; }
-        current_ = std::move(buffer_[head_++ & mask_]);
-        if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
-        return &current_;
-      }
-
-      [[nodiscard]] T* pop_wait()
-      {
-        constexpr int spin_iterations = 1000;
-        // Spin phase - fast path under load
-        for (int i = 0; i < spin_iterations; ++i) {
-          if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return nullptr; }
-          if (has_data_.load(std::memory_order_acquire)) {
-            std::scoped_lock lock(mutex_);
-            if (head_ != tail_) {
-              current_ = std::move(buffer_[head_++ & mask_]);
-              if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
-              return &current_;
-            }
+    template<typename Predicate> void run_hybrid_while(Predicate&& pred)
+    {
+      constexpr std::size_t default_spin_count = 1000;
+      std::size_t empty_spins = 0;
+      while (this->is_running() && std::forward<Predicate>(pred)()) {
+        if (poll()) {
+          empty_spins = 0;
+        } else {
+          ++empty_spins;
+          if (empty_spins >= default_spin_count) {
+            empty_spins = 0;
+            this->signal_.wait_for_work();
           }
-          cpu_pause();
-        }
-        // Wait phase - save CPU when idle
-        std::unique_lock lock(mutex_);
-        cv_.wait(lock, [this] { return head_ != tail_ || stop_; });
-        if (stop_ && head_ == tail_) { return nullptr; }
-        current_ = std::move(buffer_[head_++ & mask_]);
-        if (head_ == tail_) { has_data_.store(false, std::memory_order_release); }
-        return &current_;
-      }
-
-      void notify() { cv_.notify_one(); }
-
-      void stop()
-      {
-        stop_.store(true, std::memory_order_release);
-        cv_.notify_all();
-      }
-
-      [[nodiscard]] bool is_stopped() const noexcept { return stop_.load(std::memory_order_acquire); }
-
-    private:
-      std::array<T, Capacity> buffer_{};
-      T current_{};
-      std::size_t head_ = 0;
-      std::size_t tail_ = 0;
-      std::mutex mutex_;
-      std::condition_variable cv_;
-      std::atomic<bool> has_data_{ false };
-      std::atomic<bool> stop_{ false };
-    };
-
-  } // namespace mpsc
-
-  // =============================================================================
-  // Dual queue: unsynchronized for same-thread, synchronized for cross-thread
-  // Uses ring buffer for fast same-thread access
-  // =============================================================================
-
-  template<typename TaggedEventType> class DualQueue
-  {
-  public:
-    // Called from same thread (no sync needed)
-    template<typename E> void push_local_event(E&& event)
-    {
-      auto* slot = local_queue_.alloc_slot();
-      if (slot) [[likely]] {
-        slot->store(std::forward<E>(event));
-        local_queue_.commit_push();
-      }
-    }
-
-    // Called from other threads (synchronized) - wakes up waiting consumer
-    template<typename E> void push_remote_event(E&& event)
-    {
-      TaggedEventType tagged(std::forward<E>(event));
-      {
-        std::scoped_lock lock(mutex_);
-        remote_queue_.push(std::move(tagged));
-      }
-      has_remote_.store(true, std::memory_order_release);
-      // Only notify if consumer is actually waiting (not spinning)
-      if (waiting_.load(std::memory_order_acquire)) { cv_.notify_one(); }
-    }
-
-    // Called from same thread only - checks local first, then drains remote
-    [[nodiscard]] TaggedEventType* try_pop()
-    {
-      // Fast path: check local queue first (no atomic/lock)
-      if (auto* event = local_queue_.try_pop()) { return event; }
-      // Local empty - bulk drain remote queue
-      drain_remote();
-      return local_queue_.try_pop();
-    }
-
-    // Pop from local queue only (no remote check) - for batch processing
-    [[nodiscard]] TaggedEventType* try_pop_local() noexcept { return local_queue_.try_pop(); }
-
-    // Block until an event is available (no busy-wait)
-    // 1. Check local queue (no sync)
-    // 2. If empty, drain remote (one lock)
-    // 3. If still empty, wait on CV
-    [[nodiscard]] TaggedEventType* wait_pop_any()
-    {
-      // Fast path: check local queue first
-      if (auto* event = local_queue_.try_pop()) { return event; }
-
-      // Try draining remote without waiting
-      if (has_remote_.load(std::memory_order_acquire)) {
-        std::scoped_lock lock(mutex_);
-        while (!remote_queue_.empty()) {
-          local_queue_.push(std::move(remote_queue_.front()));
-          remote_queue_.pop();
-        }
-        has_remote_.store(false, std::memory_order_release);
-      }
-
-      // Check local again after drain
-      if (auto* event = local_queue_.try_pop()) { return event; }
-
-      // Both empty - wait on CV for remote events
-      {
-        std::unique_lock lock(mutex_);
-        waiting_.store(true, std::memory_order_release);
-        cv_.wait(lock, [this] { return !remote_queue_.empty() || stop_; });
-        waiting_.store(false, std::memory_order_release);
-
-        if (stop_ && remote_queue_.empty()) { return nullptr; }
-
-        // Drain while holding lock
-        while (!remote_queue_.empty()) {
-          local_queue_.push(std::move(remote_queue_.front()));
-          remote_queue_.pop();
-        }
-        has_remote_.store(false, std::memory_order_release);
-      }
-
-      return local_queue_.try_pop();
-    }
-
-    [[nodiscard]] bool empty()
-    {
-      drain_remote();
-      return local_queue_.empty();
-    }
-
-    void stop()
-    {
-      {
-        std::scoped_lock lock(mutex_);
-        stop_ = true;
-      }
-      cv_.notify_one();
-    }
-
-  private:
-    void drain_remote()
-    {
-      // Fast path: check atomic flag before taking lock
-      if (!has_remote_.load(std::memory_order_acquire)) { return; }
-      std::scoped_lock lock(mutex_);
-      while (!remote_queue_.empty()) {
-        local_queue_.push(std::move(remote_queue_.front()));
-        remote_queue_.pop();
-      }
-      has_remote_.store(false, std::memory_order_release);
-    }
-
-    RingBuffer<TaggedEventType> local_queue_; // Same-thread access only
-    std::queue<TaggedEventType> remote_queue_; // Cross-thread, protected by mutex
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    std::atomic<bool> has_remote_{ false };
-    std::atomic<bool> waiting_{ false }; // True when consumer is blocked on CV
-    bool stop_ = false;
-  };
-
-  // =============================================================================
-  // Same-thread receiver wrapper
-  // =============================================================================
-
-  template<typename Receiver, typename EventLoopType> class SameThreadWrapper
-  {
-  public:
-    // Use typed dispatcher for per-emitter routing tables
-    using dispatcher_type = SameThreadTypedDispatcher<Receiver, EventLoopType>;
-
-    template<typename... Args>
-    explicit SameThreadWrapper(EventLoopType* event_loop, Args&&... args)
-      : receiver_(std::forward<Args>(args)...), dispatcher_(event_loop)
-    {}
-
-    ~SameThreadWrapper() = default;
-
-    SameThreadWrapper(const SameThreadWrapper&) = delete;
-    SameThreadWrapper& operator=(const SameThreadWrapper&) = delete;
-    SameThreadWrapper(SameThreadWrapper&&) noexcept = default;
-    SameThreadWrapper& operator=(SameThreadWrapper&&) noexcept = default;
-
-    // Called by EventLoop to dispatch a queued event
-    template<typename Event>
-      requires can_receive<Receiver, std::decay_t<Event>>
-    void dispatch(Event&& event)
-    {
-      receiver_.on_event(std::forward<Event>(event), dispatcher_);
-    }
-
-    // cppcheck-suppress functionStatic ; explicit object parameter functions cannot be static
-    template<typename Self> [[nodiscard]] auto& get(this Self& self) noexcept { return self.receiver_; }
-
-    // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
-    void start() noexcept {}
-    // cppcheck-suppress functionStatic ; interface consistency with OwnThreadWrapper
-    void stop() noexcept {}
-
-  private:
-    Receiver receiver_;
-    dispatcher_type dispatcher_;
-  };
-
-  // =============================================================================
-  // Own-thread receiver wrapper
-  // =============================================================================
-
-  template<typename Receiver, typename EventLoopType> class OwnThreadWrapper
-  {
-  public:
-    using receives_list = get_receives_t<Receiver>;
-    using tagged_event = to_tagged_event_t<receives_list>;
-
-    // Automatically select queue type based on producer count
-    // SPSC is safe when at most 1 producer thread, otherwise need MPSC
-    static constexpr std::size_t producer_count = EventLoopType::template producer_count_for<Receiver>;
-    using queue_type = std::conditional_t<(producer_count < 2), spsc::Queue<tagged_event>, mpsc::Queue<tagged_event>>;
-
-    using dispatcher_type = OwnThreadTypedDispatcher<Receiver, EventLoopType>;
-
-    template<typename... Args>
-    explicit OwnThreadWrapper(EventLoopType* event_loop, Args&&... args)
-      : receiver_(std::forward<Args>(args)...), ev_(event_loop)
-    {}
-
-    ~OwnThreadWrapper() { stop(); }
-
-    OwnThreadWrapper(const OwnThreadWrapper&) = delete;
-    OwnThreadWrapper& operator=(const OwnThreadWrapper&) = delete;
-    OwnThreadWrapper(OwnThreadWrapper&&) = delete;
-    OwnThreadWrapper& operator=(OwnThreadWrapper&&) = delete;
-
-    void start()
-    {
-      if (running_.exchange(true)) { return; }
-      thread_ = std::thread([this] { run_loop(); });
-    }
-
-    void stop()
-    {
-      if (!running_.exchange(false)) { return; }
-      queue_.stop();
-      if (thread_.joinable()) { thread_.join(); }
-    }
-
-    // Push from any thread (synchronized)
-    template<typename Event>
-      requires can_receive<Receiver, Event>
-    void push(Event&& event)
-    {
-      queue_.push(tagged_event(std::forward<Event>(event)));
-      queue_.notify(); // Wake up consumer
-    }
-
-    // cppcheck-suppress functionStatic ; explicit object parameter functions cannot be static
-    template<typename Self> [[nodiscard]] auto& get(this Self& self) noexcept { return self.receiver_; }
-
-  private:
-    void run_loop()
-    {
-      dispatcher_type dispatcher(ev_);
-      while (running_.load(std::memory_order_relaxed)) {
-        auto* result = queue_.pop_wait();
-        if (result) {
-          fast_dispatch(
-            *result, [this, &dispatcher](auto& event) { receiver_.on_event(std::move(event), dispatcher); });
         }
       }
     }
-
-    Receiver receiver_;
-    EventLoopType* ev_;
-    std::thread thread_;
-    std::atomic<bool> running_{ false };
-    queue_type queue_;
   };
 
   // =============================================================================
-  // Empty wrapper for external emitters (no storage needed, just type marker)
+  // GroupOutboxes: per-group outbox management for inter-group communication
+  // Each group has one outbox per destination group (pull-based model)
   // =============================================================================
 
-  template<typename Emitter, typename EventLoopType> class ExternalEmitterWrapper
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+  template<std::size_t GroupCount, typename TaggedEvent, std::size_t Capacity = 4096> class GroupOutboxes
   {
+    static_assert(GroupCount > 0, "Must have at least one group");
+
   public:
-    explicit ExternalEmitterWrapper(EventLoopType* /*loop*/) noexcept {}
-  };
+    // Push an event to a specific destination group's outbox
+    // Returns false if the outbox is full
+    template<std::size_t DestGroup> bool push(TaggedEvent event)
+    {
+      static_assert(DestGroup < GroupCount, "Destination group index out of bounds");
+      return outboxes_[DestGroup].push(std::move(event));
+    }
 
-  // =============================================================================
-  // Wrapper type selector (avoids instantiating wrong branch)
-  // =============================================================================
+    // Push to destination group by runtime index
+    bool push_to(std::size_t dest_group, TaggedEvent event)
+    {
+      if (dest_group >= GroupCount) [[unlikely]] { return false; }
+      return outboxes_[dest_group].push(std::move(event));
+    }
 
-  template<typename T, typename EventLoopType, bool IsReceiver = is_receiver<T>> struct wrapper_selector;
+    // Get outbox for a specific destination (for direct access)
+    template<std::size_t DestGroup> [[nodiscard]] Outbox<TaggedEvent, Capacity>& outbox() noexcept
+    {
+      static_assert(DestGroup < GroupCount, "Destination group index out of bounds");
+      return outboxes_[DestGroup];
+    }
 
-  // Receiver case: select based on thread mode
-  template<typename Receiver, typename EventLoopType> struct wrapper_selector<Receiver, EventLoopType, true>
-  {
-    using type = std::conditional_t<is_own_thread_v<Receiver>,
-      OwnThreadWrapper<Receiver, EventLoopType>,
-      SameThreadWrapper<Receiver, EventLoopType>>;
-  };
+    template<std::size_t DestGroup> [[nodiscard]] const Outbox<TaggedEvent, Capacity>& outbox() const noexcept
+    {
+      static_assert(DestGroup < GroupCount, "Destination group index out of bounds");
+      return outboxes_[DestGroup];
+    }
 
-  // External emitter case: use empty wrapper
-  template<typename Emitter, typename EventLoopType> struct wrapper_selector<Emitter, EventLoopType, false>
-  {
-    using type = ExternalEmitterWrapper<Emitter, EventLoopType>;
-  };
+    // Check if any outbox has pending events
+    [[nodiscard]] bool any_pending() const noexcept
+    {
+      for (const auto& outbox : outboxes_) {
+        if (!outbox.empty()) { return true; }
+      }
+      return false;
+    }
 
-  template<typename T, typename EventLoopType> using wrapper_for = typename wrapper_selector<T, EventLoopType>::type;
-
-  // =============================================================================
-  // Receiver storage - handles non-movable wrappers via unique_ptr
-  // =============================================================================
-
-  template<typename Receiver, typename EventLoopType> class ReceiverStorage
-  {
-  public:
-    using wrapper_type = wrapper_for<Receiver, EventLoopType>;
-
-    template<typename... Args>
-    explicit ReceiverStorage(EventLoopType* loop, Args&&... args)
-      : wrapper_(std::make_unique<wrapper_type>(loop, std::forward<Args>(args)...))
-    {}
-
-    ~ReceiverStorage() = default;
-
-    ReceiverStorage(const ReceiverStorage&) = delete;
-    ReceiverStorage& operator=(const ReceiverStorage&) = delete;
-    ReceiverStorage(ReceiverStorage&&) noexcept = default;
-    ReceiverStorage& operator=(ReceiverStorage&&) noexcept = default;
-
-    template<typename Self> auto& operator*(this Self& self) noexcept { return *self.wrapper_; }
-    template<typename Self> auto* operator->(this Self& self) noexcept { return self.wrapper_.get(); }
+    // Get total pending count across all outboxes
+    [[nodiscard]] std::size_t total_pending() const noexcept
+    {
+      std::size_t total = 0;
+      for (const auto& outbox : outboxes_) { total += outbox.size(); }
+      return total;
+    }
 
   private:
-    std::unique_ptr<wrapper_type> wrapper_;
+    std::array<Outbox<TaggedEvent, Capacity>, GroupCount> outboxes_;
   };
 
   // =============================================================================
-  // Collect all event types that same-thread receivers handle
+  // GroupDispatcher: allows receivers to emit events to other groups
   // =============================================================================
 
-  // Helper to get events from a single same-thread receiver (or empty list)
-  template<typename R>
-  using same_thread_events_from =
-    std::conditional_t<is_receiver<R> && is_same_thread_v<R>, get_receives_t<R>, type_list<>>;
+  template<typename SourceGroup, std::size_t GroupIndex, typename EventLoopType> class GroupDispatcher
+  {
+  public:
+    explicit GroupDispatcher(EventLoopType& loop) noexcept : event_loop_(loop) {}
+
+    // Emit an event - routes to appropriate group(s)
+    template<typename Event> void emit(Event&& event)
+    {
+      event_loop_.template emit_from_group<GroupIndex>(std::forward<Event>(event));
+    }
+
+  private:
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
+    EventLoopType& event_loop_;
+  };
 
   // Operator for fold-based concatenation
   template<typename... Ls, typename... Rs>
@@ -1086,37 +879,6 @@ namespace detail {
   };
 
 
-  // Collect all same-thread events - just concatenate without deduplication
-  // Assumes event types are unique across receivers (common case)
-  // For cases with duplicates, TaggedEvent handles it correctly (same type appears multiple times)
-  template<typename... Receivers>
-  using collect_same_thread_events_t = typename concat_type_lists<same_thread_events_from<Receivers>...>::type;
-
-  // Helper to get events received by a single OwnThread receiver (or empty list)
-  template<typename R>
-  using own_thread_events_from =
-    std::conditional_t<is_receiver<R> && is_own_thread_v<R>, get_receives_t<R>, type_list<>>;
-
-  // Collect all events received by OwnThread receivers
-  template<typename... Receivers>
-  using collect_own_thread_events_t = typename concat_type_lists<own_thread_events_from<Receivers>...>::type;
-
-  // Helper to get events emitted by a single OwnThread receiver (or empty list)
-  template<typename R>
-  using ot_emitted_events_from = std::conditional_t<is_own_thread_v<R>, get_emits_t<R>, type_list<>>;
-
-  // Collect all events emitted by OwnThread receivers (ECS-style precomputation)
-  template<typename... Receivers>
-  using collect_ot_emitted_events_t = typename concat_type_lists<ot_emitted_events_from<Receivers>...>::type;
-
-  // Helper to get events emitted by external emitters (or empty list)
-  template<typename R>
-  using ext_emitted_events_from = std::conditional_t<is_external_emitter<R>, get_emits_t<R>, type_list<>>;
-
-  // Collect all events emitted by external emitters
-  template<typename... Receivers>
-  using collect_ext_emitted_events_t = typename concat_type_lists<ext_emitted_events_from<Receivers>...>::type;
-
   // =============================================================================
   // Filter implementation using concat (O(log N) depth instead of O(N) recursion)
   // =============================================================================
@@ -1136,596 +898,605 @@ namespace detail {
 
   template<template<typename> class Pred, typename List> using filter_list_t = typename filter_list<Pred, List>::type;
 
+  // =============================================================================
+  // Unique type list (deduplication) - O(N^2) but N is typically small
+  // =============================================================================
+
+  // Check if T is already in Seen list
+  template<typename T, typename Seen> struct not_in_seen : std::bool_constant<!contains_v<Seen, T>>
+  {
+  };
+
+  // Fold-based unique: accumulate unique types
+  template<typename Seen, typename T>
+  using unique_accumulate =
+    std::conditional_t<contains_v<Seen, T>, Seen, typename concat_type_lists<Seen, type_list<T>>::type>;
+
+  // Unique implementation using fold
+  template<typename... Ts> struct unique_fold
+  {
+    template<typename Acc, typename T> using folder = unique_accumulate<Acc, T>;
+
+    // Manual fold - start with empty, accumulate each type
+    template<typename Acc, typename First, typename... Rest> static consteval auto fold_impl()
+    {
+      if constexpr (sizeof...(Rest) == 0) {
+        return folder<Acc, First>{};
+      } else {
+        return fold_impl<folder<Acc, First>, Rest...>();
+      }
+    }
+
+    using type = std::conditional_t<sizeof...(Ts) == 0, type_list<>, decltype(fold_impl<type_list<>, Ts...>())>;
+  };
+
+  template<typename... Ts> using unique_t = typename unique_fold<Ts...>::type;
+
+  // Unique over a type_list
+  template<typename List> struct unique_list;
+  template<typename... Ts> struct unique_list<type_list<Ts...>>
+  {
+    using type = unique_t<Ts...>;
+  };
+  template<typename List> using unique_list_t = typename unique_list<List>::type;
+
 } // namespace detail
 
 // =============================================================================
-// Poll strategies - use with loop.run<Strategy>() or Strategy{loop}.run()
+// GroupEventLoop - group-based event loop with explicit threading control
 // =============================================================================
 
-// Spin strategy: never blocks, maximum throughput, burns CPU when idle
-template<typename EventLoop> struct Spin
-{
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-  EventLoop& event_loop;
-  explicit Spin(EventLoop& loop) noexcept : event_loop(loop) {}
+namespace detail {
 
-  [[nodiscard]] bool poll()
+  // Collect all events handled by receivers in a group
+  template<typename Group> struct group_all_events;
+
+  template<typename Strategy, typename... Receivers> struct group_all_events<ThreadGroup<Strategy, Receivers...>>
   {
-    auto* event = event_loop.try_get_event();
-    if (event == nullptr) { return false; }
-    event_loop.dispatch_event(*event);
-    return true;
-  }
-
-  void run()
-  {
-    while (event_loop.is_running()) { (void)poll(); }
-  }
-
-  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  template<typename Predicate> void run_while(Predicate&& pred)
-  {
-    while (event_loop.is_running() && pred()) { (void)poll(); }
-  }
-};
-
-// Wait strategy: blocks on CV when idle, zero CPU when idle, higher latency
-template<typename EventLoop> struct Wait
-{
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-  EventLoop& event_loop;
-  explicit Wait(EventLoop& loop) noexcept : event_loop(loop) {}
-
-  [[nodiscard]] bool poll()
-  {
-    auto* event = event_loop.queue().wait_pop_any();
-    if (event == nullptr) { return false; }
-    event_loop.dispatch_event(*event);
-    return true;
-  }
-
-  void run()
-  {
-    while (event_loop.is_running()) { (void)poll(); }
-  }
-
-  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  template<typename Predicate> void run_while(Predicate&& pred)
-  {
-    while (event_loop.is_running() && pred()) { (void)poll(); }
-  }
-};
-
-// Yield strategy: yields to OS when no events, balance of throughput and CPU
-template<typename EventLoop> struct Yield
-{
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-  EventLoop& event_loop;
-  explicit Yield(EventLoop& loop) noexcept : event_loop(loop) {}
-
-  [[nodiscard]] bool poll()
-  {
-    auto* event = event_loop.try_get_event();
-    if (event == nullptr) {
-      std::this_thread::yield();
-      return false;
-    }
-    event_loop.dispatch_event(*event);
-    return true;
-  }
-
-  void run()
-  {
-    while (event_loop.is_running()) { (void)poll(); }
-  }
-
-  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  template<typename Predicate> void run_while(Predicate&& pred)
-  {
-    while (event_loop.is_running() && pred()) { (void)poll(); }
-  }
-};
-
-// Hybrid strategy: spins for a number of iterations, then falls back to wait
-template<typename EventLoop> struct Hybrid
-{
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
-  EventLoop& event_loop;
-  std::size_t spin_count;
-  std::size_t empty_spins{ 0 };
-
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  explicit Hybrid(EventLoop& loop, std::size_t spins = 1000) noexcept : event_loop(loop), spin_count(spins) {}
-
-  [[nodiscard]] bool poll()
-  {
-    // Try to get an event without blocking
-    auto* event = event_loop.try_get_event();
-    if (event != nullptr) {
-      event_loop.dispatch_event(*event);
-      empty_spins = 0; // Reset counter on successful dispatch
-      return true;
-    }
-
-    // No event available - count empty spins
-    ++empty_spins;
-    if (empty_spins < spin_count) { return false; }
-
-    // Exceeded spin count - fall back to wait
-    empty_spins = 0;
-    event = event_loop.queue().wait_pop_any();
-    if (event == nullptr) { return false; }
-    event_loop.dispatch_event(*event);
-    return true;
-  }
-
-  void run() { run_while(std::true_type{}); }
-
-  // pred is only invoked, not forwarded - no std::forward needed
-  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  template<typename Predicate> void run_while(Predicate&& pred)
-  {
-    while (event_loop.is_running() && pred()) { std::ignore = poll(); }
-  }
-};
-
-// =============================================================================
-// Event Loop - the core dispatcher
-// =============================================================================
-
-template<typename... Receivers> class EventLoop
-{
-public:
-  using self_type = EventLoop<Receivers...>;
-  using receiver_list = type_list<Receivers...>;
-  using same_thread_events = detail::collect_same_thread_events_t<Receivers...>;
-  using own_thread_events = detail::collect_own_thread_events_t<Receivers...>;
-  using tagged_event = detail::to_tagged_event_t<same_thread_events>;
-  using queue_type = detail::DualQueue<tagged_event>;
-
-  // ECS-style precomputed emitter event lists
-  using ot_emitted_events = detail::collect_ot_emitted_events_t<Receivers...>;
-  using ext_emitted_events = detail::collect_ext_emitted_events_t<Receivers...>;
-
-  // ECS-style per-event receiver lists - computed once per Event type, not per dispatch
-  template<typename Event>
-  using same_thread_receivers_for =
-    detail::filter_list_t<detail::same_thread_receiver_for<Event>::template pred, receiver_list>;
-
-  template<typename Event>
-  using own_thread_receivers_for =
-    detail::filter_list_t<detail::own_thread_receiver_for<Event>::template pred, receiver_list>;
-
-  // Compile-time flag: true if OwnThread receivers emit to SameThread events
-  // When true, the DualQueue's remote (thread-safe) queue is needed
-private:
-  template<typename OTEvents, std::size_t... Is>
-  static consteval bool needs_remote_queue_impl(std::index_sequence<Is...> /*unused*/)
-  {
-    // Check if any OwnThread-emitted event is handled by SameThread receivers
-    return ((detail::contains_v<same_thread_events, detail::type_list_at_t<Is, OTEvents>>) || ...);
-  }
-
-public:
-  static constexpr bool needs_remote_queue =
-    needs_remote_queue_impl<ot_emitted_events>(std::make_index_sequence<detail::type_list_size_v<ot_emitted_events>>{});
-
-  // Consteval checks for receiver existence - uses precomputed event lists
-  template<typename Event> static consteval bool has_same_thread_receivers()
-  {
-    return detail::contains_v<same_thread_events, Event>;
-  }
-
-  template<typename Event> static consteval bool has_own_thread_receivers()
-  {
-    return detail::contains_v<own_thread_events, Event>;
-  }
-
-  // Count same-thread receivers for an event - uses precomputed same_thread_events list
-  template<typename Event> static consteval std::size_t count_same_thread_receivers()
-  {
-    // Count occurrences in precomputed event list (O(M) simple comparisons vs O(N) complex checks)
-    return detail::count_of_v<same_thread_events, Event>;
-  }
-
-  // Find index of first SameThread receiver for an event using fold-based search
-  template<typename Event, typename R, std::size_t I>
-  using st_receiver_match = std::conditional_t<detail::is_receiver<R> && detail::is_same_thread_v<R>
-                                                 && detail::contains_v<detail::get_receives_t<R>, Event>,
-    detail::found_at<I>,
-    detail::not_found>;
-
-  template<typename Event, std::size_t... Is>
-  static consteval std::size_t find_st_receiver_index_impl(std::index_sequence<Is...> /*unused*/)
-  {
-    using result =
-      decltype((detail::not_found{} + ...
-                + std::declval<st_receiver_match<Event, detail::type_list_at_t<Is, receiver_list>, Is>>()));
-    return result::value;
-  }
-
-  template<typename Event> static consteval std::size_t find_st_receiver_index()
-  {
-    return find_st_receiver_index_impl<Event>(std::index_sequence_for<Receivers...>{});
-  }
-
-private:
-  // ECS-style producer counting using consteval to avoid template instantiation overhead
-  // Count SameThread emitters for an event (using consteval, not filter_list_t)
-  template<typename Event> static consteval bool has_st_emitter_for_event()
-  {
-    return ((!detail::is_external_emitter<Receivers> && detail::is_same_thread_v<Receivers>
-              && detail::contains_v<detail::get_emits_t<Receivers>, Event>)
-            || ...);
-  }
-
-  // Count OwnThread emitters for an event
-  template<typename Event> static consteval std::size_t count_ot_emitters_for_event()
-  {
-    return ((detail::is_own_thread_v<Receivers> && detail::contains_v<detail::get_emits_t<Receivers>, Event> ? 1 : 0)
-            + ... + 0);
-  }
-
-  // Count external emitters for an event
-  template<typename Event> static consteval std::size_t count_ext_emitters_for_event()
-  {
-    return (
-      (detail::is_external_emitter<Receivers> && detail::contains_v<detail::get_emits_t<Receivers>, Event> ? 1 : 0)
-      + ... + 0);
-  }
-
-  // Count producers for a receiver that receives a single event
-  template<typename Event> static consteval std::size_t count_producers_for_single_event()
-  {
-    return (has_st_emitter_for_event<Event>() ? 1 : 0) + count_ot_emitters_for_event<Event>()
-           + count_ext_emitters_for_event<Event>();
-  }
-
-  // Compute producer count for a receiver using ECS emitter counts
-  template<typename Receiver> struct producer_count_ecs
-  {
-    using receives = detail::get_receives_t<Receiver>;
-    static constexpr std::size_t num_receives = detail::type_list_size_v<receives>;
-
-    // Fast path: single event - direct consteval count
-    // cppcheck-suppress unusedStructMember
-    static constexpr std::size_t value =
-      (num_receives == 1) ? count_producers_for_single_event<detail::type_list_at_t<0, receives>>() : 0;
+    using type = typename concat_type_lists<get_receives_t<Receivers>...>::type;
   };
 
+  template<typename Group> using group_all_events_t = typename group_all_events<Group>::type;
+
+  // Collect all events emitted by receivers in a group
+  template<typename Group> struct group_emitted_events;
+
+  template<typename Strategy, typename... Receivers> struct group_emitted_events<ThreadGroup<Strategy, Receivers...>>
+  {
+    using type = typename concat_type_lists<get_emits_t<Receivers>...>::type;
+  };
+
+  template<typename Group> using group_emitted_events_t = typename group_emitted_events<Group>::type;
+
+  // Check if a group handles a specific event
+  template<typename Group, typename Event> struct group_handles_event;
+
+  template<typename Strategy, typename... Receivers, typename Event>
+  struct group_handles_event<ThreadGroup<Strategy, Receivers...>, Event>
+    : std::bool_constant<(contains_v<get_receives_t<Receivers>, Event> || ...)>
+  {
+  };
+
+  template<typename Group, typename Event>
+  inline constexpr bool group_handles_event_v = group_handles_event<Group, Event>::value;
+
+  // Find receivers in a group that handle a specific event
+  template<typename Event> struct group_receiver_for_event
+  {
+    template<typename R> using pred = std::bool_constant<is_receiver<R> && contains_v<get_receives_t<R>, Event>>;
+  };
+
+  template<typename Group, typename Event> struct group_receivers_for_event;
+
+  template<typename Strategy, typename... Receivers, typename Event>
+  struct group_receivers_for_event<ThreadGroup<Strategy, Receivers...>, Event>
+  {
+    using type = filter_list_t<group_receiver_for_event<Event>::template pred, type_list<Receivers...>>;
+  };
+
+  template<typename Group, typename Event>
+  using group_receivers_for_event_t = typename group_receivers_for_event<Group, Event>::type;
+
+  // Count receivers in a group that handle a specific event
+  template<typename Group, typename Event>
+  inline constexpr std::size_t group_receiver_count_for_event_v =
+    type_list_size_v<group_receivers_for_event_t<Group, Event>>;
+
+  // Count groups that handle a specific event (for move optimization)
+  template<typename Event, typename... Groups>
+  inline constexpr std::size_t count_groups_handling_event_v =
+    ((group_handles_event_v<Groups, Event> ? 1 : 0) + ... + 0);
+
+  // Get indices of groups that handle a specific event
+  template<typename Event, typename... Groups> struct groups_handling_event_indices
+  {
+  private:
+    template<std::size_t... Is> static consteval auto filter_impl(std::index_sequence<Is...> /*unused*/)
+    {
+      // Build array of indices for groups that handle the event
+      constexpr std::size_t count = count_groups_handling_event_v<Event, Groups...>;
+      std::array<std::size_t, count> result{};
+      std::size_t idx = 0;
+      // cppcheck-suppress unreadVariable ; used by assignment
+      // Use comma fold (not || which short-circuits after first match)
+      ((void)(group_handles_event_v<type_at_t<Is, Groups...>, Event> ? (result[idx++] = Is) : 0), ...);
+      return result;
+    }
+
+  public:
+    static constexpr auto indices = filter_impl(std::make_index_sequence<sizeof...(Groups)>{});
+  };
+
+  // =============================================================================
+  // Per-event-type queues (ECS/data-oriented design)
+  // =============================================================================
+
+  // Create tuple of Inbox<Event> for each unique event type
+  template<typename EventList> struct make_event_queues;
+  template<typename... Events> struct make_event_queues<type_list<Events...>>
+  {
+    using type = std::tuple<Inbox<Events>...>;
+  };
+  template<typename EventList> using make_event_queues_t = typename make_event_queues<EventList>::type;
+
+  // GroupEventQueues: holds per-event-type queues for a group
+  template<typename Group> struct GroupEventQueues
+  {
+    using handled_events = unique_list_t<group_all_events_t<Group>>;
+    using queues_type = make_event_queues_t<handled_events>;
+
+    queues_type queues_;
+
+    // Push to the queue for a specific event type (copy)
+    template<typename Event> bool push(const Event& event)
+    {
+      return std::get<Inbox<Event>>(queues_).push(Event{ event });
+    }
+
+    // Push to the queue for a specific event type (move)
+    template<typename Event> bool push(Event&& event)
+    {
+      return std::get<Inbox<std::decay_t<Event>>>(queues_).push(std::forward<Event>(event));
+    }
+
+    // Try to pop from a specific event type's queue
+    template<typename Event> bool try_pop(Event& out) { return std::get<Inbox<Event>>(queues_).try_pop(out); }
+
+    // Check if all queues are empty
+    template<std::size_t... Is> [[nodiscard]] bool empty_impl(std::index_sequence<Is...> /*unused*/) const noexcept
+    {
+      return (std::get<Is>(queues_).empty() && ...);
+    }
+    [[nodiscard]] bool empty() const noexcept
+    {
+      return empty_impl(std::make_index_sequence<std::tuple_size_v<queues_type>>{});
+    }
+  };
+
+} // namespace detail
+
+template<typename... Groups> class GroupEventLoop
+{
+  static_assert(sizeof...(Groups) > 0, "At least one ThreadGroup is required");
+  static_assert((detail::is_thread_group_v<Groups> && ...), "All parameters must be ThreadGroups");
+
 public:
-  // Helper to compute producer count for a specific receiver - ECS-style
-  template<typename Receiver> static constexpr std::size_t producer_count_for = producer_count_ecs<Receiver>::value;
+  using self_type = GroupEventLoop<Groups...>;
+  static constexpr std::size_t group_count = sizeof...(Groups);
 
-  // Helper to get the queue type used for an OwnThread receiver
-  template<typename Receiver> using queue_type_for = typename detail::OwnThreadWrapper<Receiver, self_type>::queue_type;
+  // Collect all events handled across all groups
+  using all_events = typename detail::concat_type_lists<detail::group_all_events_t<Groups>...>::type;
+  using tagged_event = detail::to_tagged_event_t<all_events>;
 
-  EventLoop() : receivers_(detail::ReceiverStorage<Receivers, self_type>(this)...) {}
+  GroupEventLoop() = default;
+  ~GroupEventLoop() { stop(); }
 
-  ~EventLoop() { stop(); }
+  GroupEventLoop(const GroupEventLoop&) = delete;
+  GroupEventLoop& operator=(const GroupEventLoop&) = delete;
+  GroupEventLoop(GroupEventLoop&&) = delete;
+  GroupEventLoop& operator=(GroupEventLoop&&) = delete;
 
-  EventLoop(const EventLoop&) = delete;
-  EventLoop& operator=(const EventLoop&) = delete;
-  EventLoop(EventLoop&&) = delete;
-  EventLoop& operator=(EventLoop&&) = delete;
-
+  // Start all groups on their own threads (returns immediately)
   void start()
   {
     running_.store(true, std::memory_order_release);
-    start_all(std::index_sequence_for<Receivers...>{});
+    start_all_groups(std::make_index_sequence<group_count>{});
   }
 
-  // Strategy accessors - use with Strategy{loop}.run()
-  [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
-
-  [[nodiscard]] queue_type& queue() & noexcept { return queue_; }
-
-  [[nodiscard]] tagged_event* try_get_event()
+  // Run group I on the current thread, start others on their own threads
+  // Blocks until stopped
+  template<std::size_t I> void run()
   {
-    if constexpr (needs_remote_queue) {
-      return queue_.try_pop();
-    } else {
-      return queue_.try_pop_local();
-    }
+    static_assert(I < group_count, "Group index out of bounds");
+    running_.store(true, std::memory_order_release);
+    start_groups_except<I>(std::make_index_sequence<group_count>{});
+    run_group<I>();
   }
 
-  void dispatch_event(tagged_event& event)
-  {
-    fast_dispatch(event, [this]<typename E>(E& event2) {
-      // Use consteval count to avoid filter_list_t instantiation
-      constexpr std::size_t count = count_same_thread_receivers<std::decay_t<E>>();
-      if constexpr (count == 1) {
-        // Use direct index lookup - no filter needed
-        this->template dispatch_single_direct<std::decay_t<E>>(std::move(event2));
-      } else if constexpr (count > 1) {
-        // Multi-receiver case still needs the filtered list
-        using receivers = same_thread_receivers_for<std::decay_t<E>>;
-        this->fanout_to_same_thread_ecs(event2, receivers{});
-      }
-    });
-  }
+  // Wait for all groups to finish
+  void join() { join_all_groups(std::make_index_sequence<group_count>{}); }
 
+  // Stop all groups
   void stop()
   {
     running_.store(false, std::memory_order_release);
-    queue_.stop();
-    stop_all(std::index_sequence_for<Receivers...>{});
+    stop_all_signals(std::make_index_sequence<group_count>{});
+    join();
   }
 
-  // Emit from EV thread (uses local queue)
-  template<typename Event> void emit(Event&& event)
-  {
-    using E = std::decay_t<Event>;
-    // Use consteval checks to avoid filter_list_t instantiation
-    constexpr bool to_queue = has_same_thread_receivers<E>();
-    constexpr bool to_threads = has_own_thread_receivers<E>();
+  // Check if running
+  [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
 
-    if constexpr (to_queue && to_threads) {
-      queue_.push_local_event(event);
-      push_to_own_thread(std::forward<Event>(event));
-    } else if constexpr (to_queue) {
-      queue_.push_local_event(std::forward<Event>(event));
-    } else if constexpr (to_threads) {
-      push_to_own_thread(std::forward<Event>(event));
-    }
-  }
-
+  // Access a receiver by type (searches all groups)
   template<typename Receiver, typename Self> [[nodiscard]] auto& get(this Self& self) noexcept
   {
-    return std::get<detail::ReceiverStorage<Receiver, self_type>>(self.receivers_)->get();
+    constexpr std::size_t group_idx = find_receiver_group_index<Receiver>();
+    static_assert(group_idx < group_count, "Receiver not found in any group");
+    return std::get<group_idx>(self.storage_).template get<Receiver>();
+  }
+
+  // Access group storage by index
+  template<std::size_t I, typename Self> [[nodiscard]] auto& group(this Self& self) noexcept
+  {
+    static_assert(I < group_count, "Group index out of bounds");
+    return std::get<I>(self.storage_);
+  }
+
+  // Emit an event from external (finds appropriate groups and routes)
+  template<typename Event> void emit(Event&& event)
+  {
+    route_external_event(std::forward<Event>(event), std::make_index_sequence<group_count>{});
+  }
+
+  // Emit an event from a specific group (called by GroupDispatcher)
+  template<std::size_t SourceGroup, typename Event> void emit_from_group(Event&& event)
+  {
+    static_assert(SourceGroup < group_count, "Source group index out of bounds");
+    route_internal_event<SourceGroup>(std::forward<Event>(event), std::make_index_sequence<group_count>{});
+  }
+
+  // Poll a specific group - drains inbound events and dispatches to receivers
+  // Returns true if any work was done
+  template<std::size_t GroupIndex> bool poll_group()
+  {
+    static_assert(GroupIndex < group_count, "Group index out of bounds");
+    return poll_group_impl<GroupIndex>(std::make_index_sequence<group_count>{});
   }
 
 private:
-  template<typename, typename> friend class TypedExternalEmitter;
-  template<typename, typename> friend class SameThreadTypedDispatcher;
-  template<typename, typename> friend class OwnThreadTypedDispatcher;
-  template<typename...> friend class SharedEventLoopPtr;
-
-  template<std::size_t I> void start_one()
+  // Find which group contains a receiver type
+  template<typename Receiver> static consteval std::size_t find_receiver_group_index()
   {
-    if constexpr (detail::is_receiver<detail::type_list_at_t<I, receiver_list>>
-                  && detail::is_own_thread_v<detail::type_list_at_t<I, receiver_list>>) {
-      std::get<I>(receivers_)->start();
-    }
+    return find_receiver_group_index_impl<Receiver, 0, Groups...>();
   }
 
-  template<std::size_t I> void stop_one()
+  template<typename Receiver, std::size_t I> static consteval std::size_t find_receiver_group_index_impl()
   {
-    if constexpr (detail::is_receiver<detail::type_list_at_t<I, receiver_list>>
-                  && detail::is_own_thread_v<detail::type_list_at_t<I, receiver_list>>) {
-      std::get<I>(receivers_)->stop();
-    }
+    return group_count; // Not found
   }
 
-  template<std::size_t... Is> void start_all(std::index_sequence<Is...> /*unused*/) { (start_one<Is>(), ...); }
-
-  template<std::size_t... Is> void stop_all(std::index_sequence<Is...> /*unused*/) { (stop_one<Is>(), ...); }
-
-  // ECS-style fanout: copy to first N-1, move to last
-  template<typename Event, typename ReceiverList, std::size_t... Is>
-  void fanout_copy_n(const Event& event, std::index_sequence<Is...> /*unused*/)
+  template<typename Receiver, std::size_t I, typename First, typename... Rest>
+  static consteval std::size_t find_receiver_group_index_impl()
   {
-    (std::get<detail::ReceiverStorage<detail::type_list_at_t<Is, ReceiverList>, self_type>>(receivers_)
-        ->dispatch(event),
-      ...);
-  }
-
-  template<typename Event, typename ReceiverList> void fanout_to_same_thread_ecs(Event& event, ReceiverList /*unused*/)
-  {
-    constexpr std::size_t count = detail::type_list_size_v<ReceiverList>;
-    if constexpr (count == 1) {
-      using R = detail::type_list_at_t<0, ReceiverList>;
-      std::get<detail::ReceiverStorage<R, self_type>>(receivers_)->dispatch(std::move(event));
+    if constexpr (detail::contains_v<detail::group_receivers_t<First>, Receiver>) {
+      return I;
     } else {
-      // Copy to first N-1 receivers
-      fanout_copy_n<Event, ReceiverList>(event, std::make_index_sequence<count - 1>{});
-      // Move to last receiver
-      using LastR = detail::type_list_at_t<count - 1, ReceiverList>;
-      std::get<detail::ReceiverStorage<LastR, self_type>>(receivers_)->dispatch(std::move(event));
+      return find_receiver_group_index_impl<Receiver, I + 1, Rest...>();
     }
   }
 
-  // Direct dispatch using consteval index lookup - avoids filter_list_t instantiation
-  template<typename Event> void dispatch_single_direct(Event&& event)
+  // Start all groups on threads
+  template<std::size_t... Is> void start_all_groups(std::index_sequence<Is...> /*unused*/)
   {
-    // cppcheck-suppress unreadVariable ; used by std::get
-    constexpr std::size_t idx = find_st_receiver_index<std::decay_t<Event>>();
-    // Use index-based std::get (O(1)) instead of type-based (O(N) template instantiation)
-    std::get<idx>(receivers_)->dispatch(std::forward<Event>(event));
+    (start_group_thread<Is>(), ...);
   }
 
-  // ECS-style push: copy to first N-1, move to last
-  template<typename Event, typename ReceiverList, std::size_t... Is>
-  void push_copy_n(const Event& event, std::index_sequence<Is...> /*unused*/)
+  // Start all groups except one
+  template<std::size_t Skip, std::size_t... Is> void start_groups_except(std::index_sequence<Is...> /*unused*/)
   {
-    (std::get<detail::ReceiverStorage<detail::type_list_at_t<Is, ReceiverList>, self_type>>(receivers_)->push(event),
-      ...);
+    (start_group_if_not<Is, Skip>(), ...);
   }
 
-  template<typename Event> void push_to_own_thread(Event&& event)
+  template<std::size_t I, std::size_t Skip> void start_group_if_not()
   {
-    using ReceiverList = own_thread_receivers_for<std::decay_t<Event>>;
-    constexpr std::size_t count = detail::type_list_size_v<ReceiverList>;
-    if constexpr (count == 1) {
-      using R = detail::type_list_at_t<0, ReceiverList>;
-      std::get<detail::ReceiverStorage<R, self_type>>(receivers_)->push(std::forward<Event>(event));
-    } else if constexpr (count > 1) {
-      // Copy to first N-1 receivers
-      push_copy_n<std::decay_t<Event>, ReceiverList>(event, std::make_index_sequence<count - 1>{});
-      // Move to last receiver
-      using LastR = detail::type_list_at_t<count - 1, ReceiverList>;
-      std::get<detail::ReceiverStorage<LastR, self_type>>(receivers_)->push(std::forward<Event>(event));
-    }
+    if constexpr (I != Skip) { start_group_thread<I>(); }
   }
 
-  std::tuple<detail::ReceiverStorage<Receivers, self_type>...> receivers_;
-  queue_type queue_;
-  std::atomic<bool> running_{ false };
-};
+  template<std::size_t I> void start_group_thread()
+  {
+    std::get<I>(threads_) = std::thread([this] { run_group<I>(); });
+  }
 
-// =============================================================================
-// Typed dispatchers - each handles routing for its specific context
-// =============================================================================
+  template<std::size_t I> void run_group()
+  {
+    using Group = detail::type_at_t<I, Groups...>;
+    detail::GroupRunner<Group, I, self_type> runner(*this, std::get<I>(signals_), running_);
+    runner.run();
+  }
 
-template<typename EmitterType, typename EventLoopType> class SameThreadTypedDispatcher
-{
-  // Use consteval checks to avoid filter_list_t instantiation
-  template<typename E> static constexpr bool to_queue = EventLoopType::template has_same_thread_receivers<E>();
-  template<typename E> static constexpr bool to_threads = EventLoopType::template has_own_thread_receivers<E>();
+  // Join all group threads
+  template<std::size_t... Is> void join_all_groups(std::index_sequence<Is...> /*unused*/) { (join_group<Is>(), ...); }
 
-public:
-  explicit SameThreadTypedDispatcher(EventLoopType* loop) noexcept : event_loop_(loop) {}
+  template<std::size_t I> void join_group()
+  {
+    if (std::get<I>(threads_).joinable()) { std::get<I>(threads_).join(); }
+  }
 
-  template<typename Event>
-    requires detail::contains_v<detail::get_emits_t<EmitterType>, std::decay_t<Event>>
-  void emit(Event&& event)
+  // Stop all signals
+  template<std::size_t... Is> void stop_all_signals(std::index_sequence<Is...> /*unused*/)
+  {
+    (std::get<Is>(signals_).stop(), ...);
+  }
+
+  // Route an external event to appropriate groups (via external queue)
+  // Uses copy-to-N-1, move-to-last optimization
+  template<typename Event, std::size_t... Is>
+  void route_external_event(Event&& event, std::index_sequence<Is...> /*unused*/)
   {
     using E = std::decay_t<Event>;
-    if constexpr (to_queue<E> && to_threads<E>) {
-      event_loop_->queue_.push_local_event(event);
-      event_loop_->push_to_own_thread(std::forward<Event>(event));
-    } else if constexpr (to_queue<E>) {
-      event_loop_->queue_.push_local_event(std::forward<Event>(event));
-    } else if constexpr (to_threads<E>) {
-      event_loop_->push_to_own_thread(std::forward<Event>(event));
+    constexpr std::size_t handler_count = detail::count_groups_handling_event_v<E, Groups...>;
+
+    if constexpr (handler_count == 0) {
+      // No groups handle this event
+    } else if constexpr (handler_count == 1) {
+      // Single handler: move directly
+      (push_external_move<Is, E>(std::forward<Event>(event)), ...);
+    } else {
+      // Multiple handlers: copy to N-1, move to last
+      constexpr auto indices = detail::groups_handling_event_indices<E, Groups...>::indices;
+      push_external_copy_n<E>(event, indices, std::make_index_sequence<handler_count - 1>{});
+      // Move to last
+      constexpr std::size_t last_group = indices[handler_count - 1];
+      push_external_move<last_group, E>(std::forward<Event>(event));
     }
   }
 
-private:
-  EventLoopType* event_loop_;
-};
+  // Push external event with move semantics
+  template<std::size_t DestGroup, typename Event, typename E> void push_external_move(E&& event)
+  {
+    using Group = detail::type_at_t<DestGroup, Groups...>;
+    if constexpr (detail::group_handles_event_v<Group, Event>) {
+      std::get<DestGroup>(queues_).template push<Event>(std::forward<E>(event));
+      std::get<DestGroup>(signals_).notify_work_available();
+    }
+  }
 
-template<typename EmitterType, typename EventLoopType> class OwnThreadTypedDispatcher
-{
-  // Use consteval checks to avoid filter_list_t instantiation
-  template<typename E> static constexpr bool to_queue = EventLoopType::template has_same_thread_receivers<E>();
-  template<typename E> static constexpr bool to_threads = EventLoopType::template has_own_thread_receivers<E>();
+  // Push external event with copy semantics
+  template<std::size_t DestGroup, typename Event> void push_external_copy(const Event& event)
+  {
+    using Group = detail::type_at_t<DestGroup, Groups...>;
+    if constexpr (detail::group_handles_event_v<Group, Event>) {
+      std::get<DestGroup>(queues_).template push<Event>(event);
+      std::get<DestGroup>(signals_).notify_work_available();
+    }
+  }
 
-public:
-  explicit OwnThreadTypedDispatcher(EventLoopType* loop) noexcept : event_loop_(loop) {}
+  // Copy to first N-1 external groups
+  template<typename Event, std::size_t N, std::size_t... Is>
+  void push_external_copy_n(const Event& event,
+    const std::array<std::size_t, N>& indices,
+    std::index_sequence<Is...> /*unused*/)
+  {
+    (push_external_by_index_copy<Event>(event, indices[Is]), ...);
+  }
 
-  template<typename Event>
-    requires detail::contains_v<detail::get_emits_t<EmitterType>, std::decay_t<Event>>
-  void emit(Event&& event)
+  template<typename Event> void push_external_by_index_copy(const Event& event, std::size_t dest_group)
+  {
+    push_external_by_index_copy_impl<Event>(event, dest_group, std::make_index_sequence<group_count>{});
+  }
+
+  template<typename Event, std::size_t... Is>
+  void
+    push_external_by_index_copy_impl(const Event& event, std::size_t dest_group, std::index_sequence<Is...> /*unused*/)
+  {
+    // NOLINTNEXTLINE(readability-simplify-boolean-expr)
+    (void)((dest_group == Is ? (push_external_copy<Is, Event>(event), true) : false) || ...);
+  }
+
+  // Route an internal event (from a receiver in SourceGroup) to appropriate groups
+  // Uses copy-to-N-1, move-to-last optimization via pure compile-time iteration
+  template<std::size_t SourceGroup, typename Event, std::size_t... Is>
+  void route_internal_event(Event&& event, std::index_sequence<Is...> /*unused*/)
   {
     using E = std::decay_t<Event>;
-    if constexpr (to_queue<E> && to_threads<E>) {
-      event_loop_->queue_.push_remote_event(event);
-      event_loop_->push_to_own_thread(std::forward<Event>(event));
-    } else if constexpr (to_queue<E>) {
-      event_loop_->queue_.push_remote_event(std::forward<Event>(event));
-    } else if constexpr (to_threads<E>) {
-      event_loop_->push_to_own_thread(std::forward<Event>(event));
+    constexpr std::size_t handler_count = detail::count_groups_handling_event_v<E, Groups...>;
+
+    if constexpr (handler_count == 0) {
+      // No groups handle this event
+    } else if constexpr (handler_count == 1) {
+      // Single handler: move directly (only one will actually push due to if constexpr)
+      (push_to_group_impl<SourceGroup, Is, E, true>(std::forward<Event>(event)), ...);
+    } else {
+      // Multiple handlers: copy to N-1, move to last using compile-time counter
+      route_to_multiple_groups<SourceGroup, E, 0, handler_count>(
+        std::forward<Event>(event), std::index_sequence<Is...>{});
     }
   }
 
-private:
-  EventLoopType* event_loop_;
-};
-
-// =============================================================================
-// External emitter - allows code outside the event loop to inject events
-// EmitterType specifies which events this emitter is allowed to emit
-// Uses weak_ptr for safe access after EventLoop destruction
-// =============================================================================
-
-template<typename EmitterType, typename EventLoopType> class TypedExternalEmitter
-{
-  using dispatcher_type = OwnThreadTypedDispatcher<EmitterType, EventLoopType>;
-
-public:
-  explicit TypedExternalEmitter(std::shared_ptr<EventLoopType> loop) noexcept : loop_(std::move(loop)) {}
-
-  // Only allow emitting events declared in EmitterType::emits
-  // Returns true if event was queued, false if EventLoop was destroyed
-  template<typename Event>
-    requires detail::can_emit<EmitterType, Event>
-  bool emit(Event&& event)
+  // Route to multiple groups with compile-time counter for copy vs move decision
+  template<std::size_t SourceGroup, typename Event, std::size_t Seen, std::size_t Total>
+  void route_to_multiple_groups(Event&& /*event*/, std::index_sequence<> /*unused*/)
   {
-    if (auto locked = loop_.lock()) {
-      dispatcher_type dispatcher(locked.get());
-      dispatcher.emit(std::forward<Event>(event));
+    // Base case: no more groups to check
+  }
+
+  template<std::size_t SourceGroup,
+    typename Event,
+    std::size_t Seen,
+    std::size_t Total,
+    std::size_t First,
+    std::size_t... Rest>
+  void route_to_multiple_groups(Event&& event, std::index_sequence<First, Rest...> /*unused*/)
+  {
+    using Group = detail::type_at_t<First, Groups...>;
+    if constexpr (detail::group_handles_event_v<Group, Event>) {
+      constexpr std::size_t new_seen = Seen + 1;
+      constexpr bool is_last = (new_seen == Total);
+      if constexpr (is_last) {
+        // Last handler: move
+        push_to_group_impl<SourceGroup, First, Event, true>(std::forward<Event>(event));
+      } else {
+        // Not last: copy
+        push_to_group_impl<SourceGroup, First, Event, false>(event);
+        route_to_multiple_groups<SourceGroup, Event, new_seen, Total>(
+          std::forward<Event>(event), std::index_sequence<Rest...>{});
+      }
+    } else {
+      // This group doesn't handle the event, continue to next
+      route_to_multiple_groups<SourceGroup, Event, Seen, Total>(
+        std::forward<Event>(event), std::index_sequence<Rest...>{});
+    }
+  }
+
+  // Unified push implementation: Move=true for move, Move=false for copy
+  template<std::size_t SourceGroup, std::size_t DestGroup, typename Event, bool Move, typename E>
+  void push_to_group_impl(E&& event)
+  {
+    using Group = detail::type_at_t<DestGroup, Groups...>;
+    if constexpr (detail::group_handles_event_v<Group, Event>) {
+      if constexpr (Move) {
+        std::get<DestGroup>(queues_).template push<Event>(std::forward<E>(event));
+      } else {
+        std::get<DestGroup>(queues_).template push<Event>(Event{ event }); // explicit copy
+      }
+      if constexpr (SourceGroup != DestGroup) { std::get<DestGroup>(signals_).notify_work_available(); }
+    }
+  }
+
+  // ECS-style poll: drain all events of each type sequentially (cache-friendly)
+  // Returns true if any work was done
+  template<std::size_t GroupIndex, std::size_t... /*SourceGroups*/>
+  bool poll_group_impl(std::index_sequence<> /*unused*/)
+  {
+    using Group = detail::type_at_t<GroupIndex, Groups...>;
+    using handled_events = typename detail::GroupEventQueues<Group>::handled_events;
+    return poll_all_event_types<GroupIndex>(handled_events{});
+  }
+
+  // Overload for index_sequence with indices (forward to parameterless version)
+  template<std::size_t GroupIndex, std::size_t... SourceGroups>
+  bool poll_group_impl(std::index_sequence<SourceGroups...> /*unused*/)
+  {
+    return poll_group_impl<GroupIndex>(std::index_sequence<>{});
+  }
+
+  // Poll one event from each event type's queue in order
+  template<std::size_t GroupIndex, typename... Events> bool poll_all_event_types(type_list<Events...> /*unused*/)
+  {
+    // Try each event type's queue, return true if any had work
+    return (poll_one_event_type<GroupIndex, Events>() || ...);
+  }
+
+  // Poll one event from a specific event type's queue
+  template<std::size_t GroupIndex, typename Event> bool poll_one_event_type()
+  {
+    auto& group_queues = std::get<GroupIndex>(queues_);
+    Event event;
+    if (group_queues.template try_pop<Event>(event)) {
+      dispatch_typed_event_to_group<GroupIndex, Event>(event);
       return true;
     }
     return false;
   }
 
-  // Check if the EventLoop is still alive
-  [[nodiscard]] bool is_valid() const noexcept { return !loop_.expired(); }
-
-private:
-  std::weak_ptr<EventLoopType> loop_;
-};
-
-// =============================================================================
-// SharedEventLoopPtr - value-type wrapper that enables external emitters
-// Use this when you need external emitters; use EventLoop directly otherwise
-// Copyable (shares ownership), movable, default destructible
-// =============================================================================
-
-template<typename... Receivers> class SharedEventLoopPtr
-{
-public:
-  using loop_type = EventLoop<Receivers...>;
-
-  SharedEventLoopPtr() : loop_(std::make_shared<loop_type>()) {}
-
-  ~SharedEventLoopPtr() = default;
-  SharedEventLoopPtr(const SharedEventLoopPtr&) = default;
-  SharedEventLoopPtr& operator=(const SharedEventLoopPtr&) = default;
-  SharedEventLoopPtr(SharedEventLoopPtr&&) = default;
-  SharedEventLoopPtr& operator=(SharedEventLoopPtr&&) = default;
-
-  void start() { loop_->start(); }
-  void stop() { loop_->stop(); }
-
-  [[nodiscard]] bool is_running() const noexcept { return loop_->is_running(); }
-
-  template<typename Event> void emit(Event&& event) { loop_->emit(std::forward<Event>(event)); }
-
-  template<typename Receiver, typename Self> [[nodiscard]] auto& get(this Self& self) noexcept
+  // Dispatch a typed event directly to receivers (no variant overhead)
+  template<std::size_t GroupIndex, typename Event> void dispatch_typed_event_to_group(Event& event)
   {
-    return self.loop_->template get<Receiver>();
+    using Group = detail::type_at_t<GroupIndex, Groups...>;
+    auto& storage = std::get<GroupIndex>(storage_);
+    dispatch_to_receivers_in_group<GroupIndex, Group, Event>(storage, event);
   }
 
-  // Access underlying loop for strategies (e.g., Spin{*shared_loop}.run())
-  // Ref-qualified to prevent dangling references from temporaries
-  [[nodiscard]] loop_type& operator*() & noexcept { return *loop_; }
-  [[nodiscard]] const loop_type& operator*() const& noexcept { return *loop_; }
-  [[nodiscard]] loop_type* operator->() & noexcept { return loop_.get(); }
-  [[nodiscard]] const loop_type* operator->() const& noexcept { return loop_.get(); }
-
-  // Get a typed external emitter handle
-  // The returned emitter uses weak_ptr and is safe to use after SharedEventLoopPtr is destroyed
-  template<typename EmitterType>
-    requires(detail::is_external_emitter<EmitterType> && detail::contains_v<type_list<Receivers...>, EmitterType>)
-  [[nodiscard]] TypedExternalEmitter<EmitterType, loop_type> get_external_emitter() noexcept
+  // Direct dispatch of a typed event to receivers in a specific group (no queue, no tagging)
+  template<std::size_t GroupIndex, typename Event, typename E> void dispatch_event_to_group(E&& event)
   {
-    return TypedExternalEmitter<EmitterType, loop_type>(loop_);
+    using Group = detail::type_at_t<GroupIndex, Groups...>;
+    auto& storage = std::get<GroupIndex>(storage_);
+    Event typed_event = std::forward<E>(event);
+    dispatch_to_receivers_in_group<GroupIndex, Group, Event>(storage, typed_event);
   }
 
-private:
-  std::shared_ptr<loop_type> loop_;
-};
-
-// =============================================================================
-// Compile-time builder for EventLoop
-// Usage: Builder{}.add<Ping>().add<Pong>().build() -> EventLoop<Ping, Pong>
-// =============================================================================
-
-template<typename... Receivers> struct Builder
-{
-  template<typename NewReceiver> static constexpr auto add()
+  // Dispatch to all receivers in a group that handle this event type
+  // Uses copy-to-N-1, move-to-last optimization
+  template<std::size_t GroupIndex, typename Group, typename Event, typename Storage>
+  void dispatch_to_receivers_in_group(Storage& storage, Event& event)
   {
-    static_assert(
-      !detail::contains_v<type_list<Receivers...>, NewReceiver>, "Receiver type is already registered in this Builder");
+    // Get only receivers that handle this event type (filtered at compile time)
+    using handling_receivers = detail::group_receivers_for_event_t<Group, Event>;
+    constexpr std::size_t count = detail::type_list_size_v<handling_receivers>;
 
-    return Builder<Receivers..., NewReceiver>{};
+    if constexpr (count == 0) {
+      // No receivers handle this event
+    } else if constexpr (count == 1) {
+      // Single receiver: move
+      using R = detail::type_list_at_t<0, handling_receivers>;
+      dispatch_to_receiver_move<GroupIndex, R, Event>(storage, std::move(event));
+    } else {
+      // Multiple receivers: copy to N-1, move to last
+      dispatch_to_receivers_copy_n<GroupIndex, Event>(
+        storage, event, handling_receivers{}, std::make_index_sequence<count - 1>{});
+      using LastR = detail::type_list_at_t<count - 1, handling_receivers>;
+      dispatch_to_receiver_move<GroupIndex, LastR, Event>(storage, std::move(event));
+    }
   }
 
-  static constexpr auto build() { return EventLoop<Receivers...>{}; }
+  // Dispatch with copy semantics (for first N-1 receivers)
+  template<std::size_t GroupIndex, typename Event, typename Storage, typename ReceiverList, std::size_t... Is>
+  void dispatch_to_receivers_copy_n(Storage& storage,
+    const Event& event,
+    ReceiverList /*unused*/,
+    std::index_sequence<Is...> /*unused*/)
+  {
+    (dispatch_to_receiver_copy<GroupIndex, detail::type_list_at_t<Is, ReceiverList>, Event>(storage, event), ...);
+  }
 
-  using loop_type = EventLoop<Receivers...>;
+  // Dispatch with copy semantics
+  template<std::size_t GroupIndex, typename Receiver, typename Event, typename Storage>
+  void dispatch_to_receiver_copy(Storage& storage, const Event& event)
+  {
+    auto& receiver = storage.template get<Receiver>();
+    detail::GroupDispatcher<detail::type_at_t<GroupIndex, Groups...>, GroupIndex, self_type> dispatcher(*this);
+    Event copy = event;
+    receiver.on_event(copy, dispatcher);
+  }
+
+  // Dispatch with move semantics
+  template<std::size_t GroupIndex, typename Receiver, typename Event, typename Storage>
+  void dispatch_to_receiver_move(Storage& storage, Event&& event)
+  {
+    auto& receiver = storage.template get<Receiver>();
+    detail::GroupDispatcher<detail::type_at_t<GroupIndex, Groups...>, GroupIndex, self_type> dispatcher(*this);
+    receiver.on_event(std::forward<Event>(event), dispatcher);
+  }
+
+  template<std::size_t GroupIndex, typename Receiver, typename Event, typename Storage>
+  void dispatch_to_receiver_if_handles(Storage& storage, Event& event)
+  {
+    using receives = typename Receiver::receives;
+    if constexpr (detail::contains_v<receives, Event>) {
+      auto& receiver = storage.template get<Receiver>();
+      detail::GroupDispatcher<detail::type_at_t<GroupIndex, Groups...>, GroupIndex, self_type> dispatcher(*this);
+      receiver.on_event(event, dispatcher);
+    }
+  }
+
+  // Helper to create tuple of N identical types
+  template<typename T, typename> struct repeat_type;
+  template<typename T, std::size_t... Is> struct repeat_type<T, std::index_sequence<Is...>>
+  {
+    template<std::size_t> using type_at = T;
+    using type = std::tuple<type_at<Is>...>;
+  };
+  template<typename T, std::size_t N> using repeat_type_t = typename repeat_type<T, std::make_index_sequence<N>>::type;
+
+  // Storage
+  std::tuple<detail::GroupStorage<Groups>...> storage_;
+  repeat_type_t<std::thread, group_count> threads_{};
+  repeat_type_t<detail::GroupWorkSignal, group_count> signals_{};
+  std::atomic<bool> running_{ false };
+
+  // Per-event-type queues: one set per group (ECS/data-oriented design)
+  std::tuple<detail::GroupEventQueues<Groups>...> queues_{};
 };
 
 } // namespace ev_loop

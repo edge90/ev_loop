@@ -62,73 +62,73 @@ struct TrackingCounter
 // Tracked type with per-instance counter (no global state)
 // =============================================================================
 
-struct TrackedString
+template<typename T> struct Tracked
 {
   std::shared_ptr<TrackingCounter> counter;
-  std::string value;
+  T value{};
 
-  TrackedString() = default;
+  Tracked() = default;
 
-  explicit TrackedString(std::shared_ptr<TrackingCounter> cnt) : counter(std::move(cnt))
+  explicit Tracked(std::shared_ptr<TrackingCounter> cnt) : counter(std::move(cnt))
   {
-    assert(counter);
-    counter->constructed_count.fetch_add(1, std::memory_order_relaxed);
+    if (counter) { counter->constructed_count.fetch_add(1, std::memory_order_relaxed); }
   }
 
-  TrackedString(std::shared_ptr<TrackingCounter> cnt, std::string str) : counter(std::move(cnt)), value(std::move(str))
+  Tracked(std::shared_ptr<TrackingCounter> cnt, T val) : counter(std::move(cnt)), value(std::move(val))
   {
-    assert(counter);
-    counter->constructed_count.fetch_add(1, std::memory_order_relaxed);
+    if (counter) { counter->constructed_count.fetch_add(1, std::memory_order_relaxed); }
   }
 
-  TrackedString(const TrackedString& other) : counter(other.counter), value(other.value)
+  Tracked(const Tracked& other) : counter(other.counter), value(other.value)
   {
-    assert(counter);
-    counter->constructed_count.fetch_add(1, std::memory_order_relaxed);
-    counter->copy_count.fetch_add(1, std::memory_order_relaxed);
+    if (counter) {
+      counter->constructed_count.fetch_add(1, std::memory_order_relaxed);
+      counter->copy_count.fetch_add(1, std::memory_order_relaxed);
+    }
   }
 
   // Intentionally copy counter (not move) so moved-from object tracks destruction
-  TrackedString(TrackedString&& other) noexcept
-    : counter(other.counter) // NOLINT(performance-move-constructor-init, cert-oop11-cpp)
+  Tracked(Tracked&& other) noexcept
+    : counter(other.counter) // NOLINT(performance-move-constructor-init,cert-oop11-cpp)
       ,
       value(std::move(other.value))
   {
-    assert(counter);
-    counter->constructed_count.fetch_add(1, std::memory_order_relaxed);
-    counter->move_count.fetch_add(1, std::memory_order_relaxed);
+    if (counter) {
+      counter->constructed_count.fetch_add(1, std::memory_order_relaxed);
+      counter->move_count.fetch_add(1, std::memory_order_relaxed);
+    }
   }
 
-  TrackedString& operator=(const TrackedString& other)
+  Tracked& operator=(const Tracked& other)
   {
     if (this != &other) {
-      assert(counter && other.counter);
-      if (counter != other.counter) { counter->destructed_count.fetch_add(1, std::memory_order_relaxed); }
+      if (counter && counter != other.counter) { counter->destructed_count.fetch_add(1, std::memory_order_relaxed); }
       counter = other.counter;
       value = other.value;
-      counter->copy_count.fetch_add(1, std::memory_order_relaxed);
+      if (counter) { counter->copy_count.fetch_add(1, std::memory_order_relaxed); }
     }
     return *this;
   }
 
   // Intentionally copy counter (not move) so moved-from object tracks destruction
-  TrackedString& operator=(TrackedString&& other) noexcept
+  Tracked& operator=(Tracked&& other) noexcept
   {
     if (this != &other) {
-      assert(counter && other.counter);
-      if (counter != other.counter) { counter->destructed_count.fetch_add(1, std::memory_order_relaxed); }
+      if (counter && counter != other.counter) { counter->destructed_count.fetch_add(1, std::memory_order_relaxed); }
       counter = other.counter; // NOLINT(performance-move-const-arg)
       value = std::move(other.value);
-      counter->move_count.fetch_add(1, std::memory_order_relaxed);
+      if (counter) { counter->move_count.fetch_add(1, std::memory_order_relaxed); }
     }
     return *this;
   }
 
-  ~TrackedString()
+  ~Tracked()
   {
-    assert(counter);
-    counter->destructed_count.fetch_add(1, std::memory_order_relaxed);
+    if (counter) { counter->destructed_count.fetch_add(1, std::memory_order_relaxed); }
   }
 
-  bool operator==(const TrackedString& other) const { return value == other.value; }
+  bool operator==(const Tracked& other) const { return value == other.value; }
 };
+
+using TrackedString = Tracked<std::string>;
+using TrackedInt = Tracked<int>;

@@ -85,7 +85,7 @@ int main()
     loop.start();
     loop.emit(Ping{ 0 });
 
-    ev_loop::Spin strategy{ loop };
+    ev_loop::SpinRunner strategy{ loop };
     const auto started = steady_clock::now();
     for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
     const auto elapsed = steady_clock::now() - started;
@@ -103,7 +103,7 @@ int main()
     loop.start();
     loop.emit(Ping{ 0 });
 
-    ev_loop::Yield strategy{ loop };
+    ev_loop::YieldRunner strategy{ loop };
     const auto started = steady_clock::now();
     for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
     const auto elapsed = steady_clock::now() - started;
@@ -121,7 +121,7 @@ int main()
     loop.start();
     loop.emit(Ping{ 0 });
 
-    ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
+    ev_loop::HybridRunner strategy{ loop, kHybridSpinCount };
     const auto started = steady_clock::now();
     for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
     const auto elapsed = steady_clock::now() - started;
@@ -139,7 +139,7 @@ int main()
     loop.start();
     loop.emit(Ping{ 0 });
 
-    ev_loop::Wait strategy{ loop };
+    ev_loop::WaitRunner strategy{ loop };
     const auto started = steady_clock::now();
     for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
     const auto elapsed = steady_clock::now() - started;
