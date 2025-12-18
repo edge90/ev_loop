@@ -892,11 +892,105 @@ template<typename... Groups> class GroupEventLoop
   static_assert(sizeof...(Groups) > 0, "At least one ThreadGroup is required");
   static_assert((detail::is_thread_group_v<Groups> && ...), "All parameters must be ThreadGroups");
 
+  // Helper to create tuple of N identical types (forward declaration for Builder)
+  template<typename T, typename> struct repeat_type;
+  template<typename T, std::size_t... Is> struct repeat_type<T, std::index_sequence<Is...>>
+  {
+    template<std::size_t> using type_at = T;
+    using type = std::tuple<type_at<Is>...>;
+  };
+  template<typename T, std::size_t N> using repeat_type_t = typename repeat_type<T, std::make_index_sequence<N>>::type;
+
 public:
   using self_type = GroupEventLoop<Groups...>;
   static constexpr std::size_t group_count = sizeof...(Groups);
 
-  GroupEventLoop() = default;
+  // ==========================================================================
+  // Setup - constexpr builder that stores primed events in a tuple
+  // Usage: Loop loop = Loop::setup().prime(EventA{}).prime(EventB{}).create();
+  // ==========================================================================
+  template<typename... PrimedEvents> class Setup
+  {
+    std::tuple<PrimedEvents...> events_;
+
+    // Allow Setup<Other...> to access events_ for chaining
+    template<typename...> friend class Setup;
+
+  public:
+    constexpr Setup() = default;
+
+    // Internal constructor for chaining (from tuple)
+    constexpr explicit Setup(std::tuple<PrimedEvents...> events) : events_(std::move(events)) {}
+
+    // Prime returns a new Setup with the event added (lvalue - copies tuple)
+    template<typename Event> [[nodiscard]] constexpr auto prime(Event&& event) const&
+    {
+      return Setup<PrimedEvents..., std::decay_t<Event>>{ std::tuple_cat(
+        events_, std::make_tuple(std::forward<Event>(event))) };
+    }
+
+    // Prime returns a new Setup with the event added (rvalue - moves tuple)
+    template<typename Event> [[nodiscard]] constexpr auto prime(Event&& event) &&
+    {
+      return Setup<PrimedEvents..., std::decay_t<Event>>{ std::tuple_cat(
+        std::move(events_), std::make_tuple(std::forward<Event>(event))) };
+    }
+
+    // Create EventLoop on stack (relies on NRVO)
+    [[nodiscard]] auto create() const& -> GroupEventLoop
+    {
+      GroupEventLoop loop;
+      std::apply([&loop](const auto&... events) { (loop.prime_event(events), ...); }, events_);
+      return loop;
+    }
+
+    // Create EventLoop on stack (moves events - rvalue overload)
+    [[nodiscard]] auto create() && -> GroupEventLoop
+    {
+      GroupEventLoop loop;
+      std::apply([&loop](auto&&... events) { (loop.prime_event(std::forward<decltype(events)>(events)), ...); },
+        std::move(events_));
+      return loop;
+    }
+
+    // Create with factory (e.g., std::make_unique<Loop>)
+    template<typename Factory> [[nodiscard]] auto create(Factory&& factory) const&
+    {
+      auto loop = std::invoke(std::forward<Factory>(factory));
+      std::apply([&loop](const auto&... events) { (loop->prime_event(events), ...); }, events_);
+      return loop;
+    }
+
+    // Create with factory (moves events - rvalue overload)
+    template<typename Factory> [[nodiscard]] auto create(Factory&& factory) &&
+    {
+      auto loop = std::invoke(std::forward<Factory>(factory));
+      std::apply([&loop](auto&&... events) { (loop->prime_event(std::forward<decltype(events)>(events)), ...); },
+        std::move(events_));
+      return loop;
+    }
+
+    // Create on heap (returns unique_ptr, not started)
+    [[nodiscard]] auto create_unique() && -> std::unique_ptr<GroupEventLoop>
+    {
+      auto ptr = std::unique_ptr<GroupEventLoop>(new GroupEventLoop());
+      std::apply([&ptr](auto&&... events) { (ptr->prime_event(std::forward<decltype(events)>(events)), ...); },
+        std::move(events_));
+      return ptr;
+    }
+
+    // Create on heap and start threads (returns unique_ptr)
+    [[nodiscard]] auto start_unique() && -> std::unique_ptr<GroupEventLoop>
+    {
+      auto ptr = std::move(*this).create_unique();
+      ptr->start();
+      return ptr;
+    }
+  };
+
+  // Factory method - returns an empty Setup for fluent chaining
+  [[nodiscard]] static constexpr Setup<> setup() { return {}; }
+
   ~GroupEventLoop() { stop(); }
 
   GroupEventLoop(const GroupEventLoop&) = delete;
@@ -904,12 +998,15 @@ public:
   GroupEventLoop(GroupEventLoop&&) = delete;
   GroupEventLoop& operator=(GroupEventLoop&&) = delete;
 
+private:
+  // Private default constructor - use setup().prime().create()
+  GroupEventLoop() = default;
+  template<typename...> friend class Setup;
+
+public:
   // Start all groups on their own threads (returns immediately)
-  void start()
-  {
-    running_.store(true, std::memory_order_release);
-    start_all_groups(std::make_index_sequence<group_count>{});
-  }
+  // Only useful if you used build() instead of start()
+  void start() { start_threads(); }
 
   // Run group I on the current thread, start others on their own threads
   // Blocks until stopped
@@ -950,12 +1047,6 @@ public:
     return std::get<I>(self.storage_);
   }
 
-  // Emit an event from external (finds appropriate groups and routes)
-  template<typename Event> void emit(Event&& event)
-  {
-    route_external_event(std::forward<Event>(event), std::make_index_sequence<group_count>{});
-  }
-
   // Emit an event from a specific group (called by GroupDispatcher)
   template<std::size_t SourceGroup, typename Event> void emit_from_group(Event&& event)
   {
@@ -972,6 +1063,25 @@ public:
   }
 
 private:
+  // Private constructor from builder state
+  GroupEventLoop(std::tuple<detail::GroupStorage<Groups>...>&& storage,
+    repeat_type_t<detail::GroupWorkSignal, group_count>&& signals,
+    std::tuple<detail::GroupEventQueues<Groups, Groups...>...>&& queues)
+    : storage_(std::move(storage)), signals_(std::move(signals)), queues_(std::move(queues))
+  {}
+
+  // Start all threads (called by Builder::start() or public start())
+  void start_threads()
+  {
+    running_.store(true, std::memory_order_release);
+    start_all_groups(std::make_index_sequence<group_count>{});
+  }
+
+  // Prime an event before starting (called by Builder::prime())
+  template<typename Event> void prime_event(Event&& event)
+  {
+    route_internal_event<0>(std::forward<Event>(event), std::make_index_sequence<group_count>{});
+  }
   // Find which group contains a receiver type
   template<typename Receiver> static consteval std::size_t find_receiver_group_index()
   {
@@ -1034,71 +1144,6 @@ private:
   template<std::size_t... Is> void stop_all_signals(std::index_sequence<Is...> /*unused*/)
   {
     (std::get<Is>(signals_).stop(), ...);
-  }
-
-  // Route an external event to appropriate groups (via external queue)
-  // Uses copy-to-N-1, move-to-last optimization
-  template<typename Event, std::size_t... Is>
-  void route_external_event(Event&& event, std::index_sequence<Is...> /*unused*/)
-  {
-    using E = std::decay_t<Event>;
-    constexpr std::size_t handler_count = detail::count_groups_handling_event_v<E, Groups...>;
-
-    if constexpr (handler_count == 0) {
-      // No groups handle this event
-    } else if constexpr (handler_count == 1) {
-      // Single handler: move directly
-      (push_external_move<Is, E>(std::forward<Event>(event)), ...);
-    } else {
-      // Multiple handlers: copy to N-1, move to last
-      constexpr auto indices = detail::groups_handling_event_indices<E, Groups...>::indices;
-      push_external_copy_n<E>(event, indices, std::make_index_sequence<handler_count - 1>{});
-      // Move to last
-      constexpr std::size_t last_group = indices[handler_count - 1];
-      push_external_move<last_group, E>(std::forward<Event>(event));
-    }
-  }
-
-  // Push external event with move semantics
-  template<std::size_t DestGroup, typename Event, typename E> void push_external_move(E&& event)
-  {
-    using Group = detail::type_at_t<DestGroup, Groups...>;
-    if constexpr (detail::group_handles_event_v<Group, Event>) {
-      std::get<DestGroup>(queues_).template push<Event>(std::forward<E>(event));
-      std::get<DestGroup>(signals_).notify_work_available();
-    }
-  }
-
-  // Push external event with copy semantics
-  template<std::size_t DestGroup, typename Event> void push_external_copy(const Event& event)
-  {
-    using Group = detail::type_at_t<DestGroup, Groups...>;
-    if constexpr (detail::group_handles_event_v<Group, Event>) {
-      std::get<DestGroup>(queues_).template push<Event>(event);
-      std::get<DestGroup>(signals_).notify_work_available();
-    }
-  }
-
-  // Copy to first N-1 external groups
-  template<typename Event, std::size_t N, std::size_t... Is>
-  void push_external_copy_n(const Event& event,
-    const std::array<std::size_t, N>& indices,
-    std::index_sequence<Is...> /*unused*/)
-  {
-    (push_external_by_index_copy<Event>(event, indices[Is]), ...);
-  }
-
-  template<typename Event> void push_external_by_index_copy(const Event& event, std::size_t dest_group)
-  {
-    push_external_by_index_copy_impl<Event>(event, dest_group, std::make_index_sequence<group_count>{});
-  }
-
-  template<typename Event, std::size_t... Is>
-  void
-    push_external_by_index_copy_impl(const Event& event, std::size_t dest_group, std::index_sequence<Is...> /*unused*/)
-  {
-    // NOLINTNEXTLINE(readability-simplify-boolean-expr)
-    (void)((dest_group == Is ? (push_external_copy<Is, Event>(event), true) : false) || ...);
   }
 
   // Route an internal event (from a receiver in SourceGroup) to appropriate groups
@@ -1287,15 +1332,6 @@ private:
       receiver.on_event(event, dispatcher);
     }
   }
-
-  // Helper to create tuple of N identical types
-  template<typename T, typename> struct repeat_type;
-  template<typename T, std::size_t... Is> struct repeat_type<T, std::index_sequence<Is...>>
-  {
-    template<std::size_t> using type_at = T;
-    using type = std::tuple<type_at<Is>...>;
-  };
-  template<typename T, std::size_t N> using repeat_type_t = typename repeat_type<T, std::make_index_sequence<N>>::type;
 
   // Storage
   std::tuple<detail::GroupStorage<Groups>...> storage_;

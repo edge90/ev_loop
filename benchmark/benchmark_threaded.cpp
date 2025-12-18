@@ -133,37 +133,35 @@ void benchmark_two_groups()
 
   // SpinGroup x2
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverC>, ev_loop::SpinGroup<ReceiverD>> loop;
-    loop.emit(Ping{ 0 }); // Emit before start (only safe before start)
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverC>, ev_loop::SpinGroup<ReceiverD>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<ReceiverC>().counter.load(std::memory_order_relaxed) < kTwoGroupTargetCount) {
+    while (loop->get<ReceiverC>().counter.load(std::memory_order_relaxed) < kTwoGroupTargetCount) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    loop.stop();
-    const auto total = loop.get<ReceiverC>().counter.load() + loop.get<ReceiverD>().counter.load();
+    loop->stop();
+    const auto total = loop->get<ReceiverC>().counter.load() + loop->get<ReceiverD>().counter.load();
     std::println("  SpinGroup x2: {:>12} events/sec", events_per_second(total, elapsed));
   }
 
   // WaitGroup x2
   {
-    ev_loop::GroupEventLoop<ev_loop::WaitGroup<ReceiverC>, ev_loop::WaitGroup<ReceiverD>> loop;
-    loop.emit(Ping{ 0 }); // Emit before start (only safe before start)
+    using Loop = ev_loop::GroupEventLoop<ev_loop::WaitGroup<ReceiverC>, ev_loop::WaitGroup<ReceiverD>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<ReceiverC>().counter.load(std::memory_order_relaxed) < kTwoGroupTargetCount) {
+    while (loop->get<ReceiverC>().counter.load(std::memory_order_relaxed) < kTwoGroupTargetCount) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    loop.stop();
-    const auto total = loop.get<ReceiverC>().counter.load() + loop.get<ReceiverD>().counter.load();
+    loop->stop();
+    const auto total = loop->get<ReceiverC>().counter.load() + loop->get<ReceiverD>().counter.load();
     std::println("  WaitGroup x2: {:>12} events/sec\n", events_per_second(total, elapsed));
   }
 }
@@ -175,37 +173,37 @@ void benchmark_main_to_background()
 
   // SpinGroup x2
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<MainThreadReceiver>, ev_loop::SpinGroup<BackgroundReceiver>> loop;
-    loop.emit(Ping{ 0 }); // Emit before start (only safe before start)
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::SpinGroup<MainThreadReceiver>, ev_loop::SpinGroup<BackgroundReceiver>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<MainThreadReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
+    while (loop->get<MainThreadReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    loop.stop();
-    const auto total = loop.get<MainThreadReceiver>().counter.load() + loop.get<BackgroundReceiver>().counter.load();
+    loop->stop();
+    const auto total = loop->get<MainThreadReceiver>().counter.load() + loop->get<BackgroundReceiver>().counter.load();
     std::println("  SpinGroup x2: {:>12} events/sec", events_per_second(total, elapsed));
   }
 
   // WaitGroup x2
   {
-    ev_loop::GroupEventLoop<ev_loop::WaitGroup<MainThreadReceiver>, ev_loop::WaitGroup<BackgroundReceiver>> loop;
-    loop.emit(Ping{ 0 }); // Emit before start (only safe before start)
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::WaitGroup<MainThreadReceiver>, ev_loop::WaitGroup<BackgroundReceiver>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<MainThreadReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
+    while (loop->get<MainThreadReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    loop.stop();
-    const auto total = loop.get<MainThreadReceiver>().counter.load() + loop.get<BackgroundReceiver>().counter.load();
+    loop->stop();
+    const auto total = loop->get<MainThreadReceiver>().counter.load() + loop->get<BackgroundReceiver>().counter.load();
     std::println("  WaitGroup x2: {:>12} events/sec\n", events_per_second(total, elapsed));
   }
 }
@@ -217,37 +215,39 @@ void benchmark_background_to_main()
 
   // SpinGroup x2
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<MainPongReceiver>, ev_loop::SpinGroup<BackgroundPingReceiver>> loop;
-    loop.emit(Pong{ 0 }); // Emit before start (only safe before start)
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::SpinGroup<MainPongReceiver>, ev_loop::SpinGroup<BackgroundPingReceiver>>;
+    auto loop = Loop::setup().prime(Pong{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<BackgroundPingReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
+    while (loop->get<BackgroundPingReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    loop.stop();
-    const auto total = loop.get<MainPongReceiver>().counter.load() + loop.get<BackgroundPingReceiver>().counter.load();
+    loop->stop();
+    const auto total =
+      loop->get<MainPongReceiver>().counter.load() + loop->get<BackgroundPingReceiver>().counter.load();
     std::println("  SpinGroup x2: {:>12} events/sec", events_per_second(total, elapsed));
   }
 
   // WaitGroup x2
   {
-    ev_loop::GroupEventLoop<ev_loop::WaitGroup<MainPongReceiver>, ev_loop::WaitGroup<BackgroundPingReceiver>> loop;
-    loop.emit(Pong{ 0 }); // Emit before start (only safe before start)
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::WaitGroup<MainPongReceiver>, ev_loop::WaitGroup<BackgroundPingReceiver>>;
+    auto loop = Loop::setup().prime(Pong{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<BackgroundPingReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
+    while (loop->get<BackgroundPingReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    loop.stop();
-    const auto total = loop.get<MainPongReceiver>().counter.load() + loop.get<BackgroundPingReceiver>().counter.load();
+    loop->stop();
+    const auto total =
+      loop->get<MainPongReceiver>().counter.load() + loop->get<BackgroundPingReceiver>().counter.load();
     std::println("  WaitGroup x2: {:>12} events/sec\n", events_per_second(total, elapsed));
   }
 }

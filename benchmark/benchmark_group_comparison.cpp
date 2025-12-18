@@ -268,11 +268,11 @@ int main()
   // SpinGroup - manual polling
   // ---------------------------------------------------------------------
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA, ReceiverB>> loop;
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA, ReceiverB>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = loop.poll_group<0>(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
     const auto eps = events_per_second(kIterations, elapsed);
@@ -283,11 +283,11 @@ int main()
   // YieldGroup - manual polling
   // ---------------------------------------------------------------------
   {
-    ev_loop::GroupEventLoop<ev_loop::YieldGroup<ReceiverA, ReceiverB>> loop;
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::YieldGroup<ReceiverA, ReceiverB>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = loop.poll_group<0>(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
     const auto eps = events_per_second(kIterations, elapsed);
@@ -305,40 +305,38 @@ int main()
   // 2 SpinGroups - each on own thread
   // ---------------------------------------------------------------------
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<GroupA>, ev_loop::SpinGroup<GroupB>> loop;
-    loop.emit(Ping{ 0 }); // Emit before start (only safe before start)
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<GroupA>, ev_loop::SpinGroup<GroupB>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<GroupA>().count.load(std::memory_order_relaxed) < kMultiIterations) { std::this_thread::yield(); }
+    while (loop->get<GroupA>().count.load(std::memory_order_relaxed) < kMultiIterations) { std::this_thread::yield(); }
     const auto elapsed = steady_clock::now() - started;
 
-    const int total_events = loop.get<GroupA>().count.load() + loop.get<GroupB>().count.load();
+    const int total_events = loop->get<GroupA>().count.load() + loop->get<GroupB>().count.load();
     const auto eps = events_per_second(total_events, elapsed);
     std::println("SpinGroup x2:  {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total_events, elapsed));
 
-    loop.stop();
+    loop->stop();
   }
 
   // ---------------------------------------------------------------------
   // 2 WaitGroups - each on own thread
   // ---------------------------------------------------------------------
   {
-    ev_loop::GroupEventLoop<ev_loop::WaitGroup<GroupA>, ev_loop::WaitGroup<GroupB>> loop;
-    loop.emit(Ping{ 0 }); // Emit before start (only safe before start)
+    using Loop = ev_loop::GroupEventLoop<ev_loop::WaitGroup<GroupA>, ev_loop::WaitGroup<GroupB>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<GroupA>().count.load(std::memory_order_relaxed) < kMultiIterations) { std::this_thread::yield(); }
+    while (loop->get<GroupA>().count.load(std::memory_order_relaxed) < kMultiIterations) { std::this_thread::yield(); }
     const auto elapsed = steady_clock::now() - started;
 
-    const int total_events = loop.get<GroupA>().count.load() + loop.get<GroupB>().count.load();
+    const int total_events = loop->get<GroupA>().count.load() + loop->get<GroupB>().count.load();
     const auto eps = events_per_second(total_events, elapsed);
     std::println("WaitGroup x2:  {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total_events, elapsed));
 
-    loop.stop();
+    loop->stop();
   }
 
   // =====================================================================
@@ -350,15 +348,15 @@ int main()
   // Single group ping-pong (intra-group dispatch)
   // ---------------------------------------------------------------------
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<PingPongA, PingPongB>> loop;
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<PingPongA, PingPongB>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    loop.emit(Ping{ 0 });
 
-    while (loop.get<PingPongA>().count < kPingPongLimit) { std::ignore = loop.poll_group<0>(); }
+    while (loop->get<PingPongA>().count < kPingPongLimit) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
-    const int total = loop.get<PingPongA>().count + loop.get<PingPongB>().count;
+    const int total = loop->get<PingPongA>().count + loop->get<PingPongB>().count;
     const auto eps = events_per_second(total, elapsed);
     std::println("1 Group (intra-group):  {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
   }
@@ -367,22 +365,21 @@ int main()
   // Two groups ping-pong (inter-group dispatch via queues) - SPSC
   // ---------------------------------------------------------------------
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<PingPongGrpA>, ev_loop::SpinGroup<PingPongGrpB>> loop;
-    loop.emit(Ping{ 0 }); // Emit before start (only safe before start)
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<PingPongGrpA>, ev_loop::SpinGroup<PingPongGrpB>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
-    while (loop.get<PingPongGrpA>().count.load(std::memory_order_relaxed) < kPingPongLimit) {
+    while (loop->get<PingPongGrpA>().count.load(std::memory_order_relaxed) < kPingPongLimit) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    const int total = loop.get<PingPongGrpA>().count.load() + loop.get<PingPongGrpB>().count.load();
+    const int total = loop->get<PingPongGrpA>().count.load() + loop->get<PingPongGrpB>().count.load();
     const auto eps = events_per_second(total, elapsed);
     std::println("2 Groups SPSC:          {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
 
-    loop.stop();
+    loop->stop();
   }
 
   // ---------------------------------------------------------------------
@@ -393,26 +390,22 @@ int main()
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<MpscProducer1>,
       ev_loop::SpinGroup<MpscProducer2>,
       ev_loop::SpinGroup<MpscCollector>>;
-    Loop loop;
-
-    // Kick off both producers BEFORE start (emit is only safe before start)
-    loop.emit(MpscAck{ 0 });
+    auto loop = Loop::setup().prime(MpscAck{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
     // Wait for collector to process enough events
-    while (loop.get<MpscCollector>().count.load(std::memory_order_relaxed) < kPingPongLimit) {
+    while (loop->get<MpscCollector>().count.load(std::memory_order_relaxed) < kPingPongLimit) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    const int total = loop.get<MpscProducer1>().count.load() + loop.get<MpscProducer2>().count.load()
-                      + loop.get<MpscCollector>().count.load();
+    const int total = loop->get<MpscProducer1>().count.load() + loop->get<MpscProducer2>().count.load()
+                      + loop->get<MpscCollector>().count.load();
     const auto eps = events_per_second(total, elapsed);
     std::println("3 Groups MPSC (2→1):    {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
 
-    loop.stop();
+    loop->stop();
   }
 
   // ---------------------------------------------------------------------
@@ -424,27 +417,23 @@ int main()
       ev_loop::SpinGroup<MpscProducer3>,
       ev_loop::SpinGroup<MpscProducer4>,
       ev_loop::SpinGroup<MpscCollector>>;
-    Loop loop;
-
-    // Kick off all producers BEFORE start (emit is only safe before start)
-    loop.emit(MpscAck{ 0 });
+    auto loop = Loop::setup().prime(MpscAck{ 0 }).start_unique();
 
     const auto started = steady_clock::now();
-    loop.start();
 
     // Wait for collector to process enough events
-    while (loop.get<MpscCollector>().count.load(std::memory_order_relaxed) < kPingPongLimit) {
+    while (loop->get<MpscCollector>().count.load(std::memory_order_relaxed) < kPingPongLimit) {
       std::this_thread::yield();
     }
     const auto elapsed = steady_clock::now() - started;
 
-    const int total = loop.get<MpscProducer1>().count.load() + loop.get<MpscProducer2>().count.load()
-                      + loop.get<MpscProducer3>().count.load() + loop.get<MpscProducer4>().count.load()
-                      + loop.get<MpscCollector>().count.load();
+    const int total = loop->get<MpscProducer1>().count.load() + loop->get<MpscProducer2>().count.load()
+                      + loop->get<MpscProducer3>().count.load() + loop->get<MpscProducer4>().count.load()
+                      + loop->get<MpscCollector>().count.load();
     const auto eps = events_per_second(total, elapsed);
     std::println("5 Groups MPSC (4→1):    {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
 
-    loop.stop();
+    loop->stop();
   }
 
   std::println("\nDone.");

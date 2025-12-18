@@ -73,11 +73,11 @@ int main()
 
   // SpinGroup benchmark
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<A, B>> loop;
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<A, B>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = loop.poll_group<0>(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
     std::println("SpinGroup:   {:>8} us  ({:>12} events/sec)",
@@ -87,11 +87,11 @@ int main()
 
   // YieldGroup benchmark
   {
-    ev_loop::GroupEventLoop<ev_loop::YieldGroup<A, B>> loop;
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::YieldGroup<A, B>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = loop.poll_group<0>(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
     std::println("YieldGroup:  {:>8} us  ({:>12} events/sec)",
@@ -101,11 +101,11 @@ int main()
 
   // HybridGroup benchmark
   {
-    ev_loop::GroupEventLoop<ev_loop::HybridGroup<A, B>> loop;
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::HybridGroup<A, B>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = loop.poll_group<0>(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
     std::println("HybridGroup: {:>8} us  ({:>12} events/sec)",
@@ -115,11 +115,11 @@ int main()
 
   // WaitGroup benchmark
   {
-    ev_loop::GroupEventLoop<ev_loop::WaitGroup<A, B>> loop;
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::WaitGroup<A, B>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = loop.poll_group<0>(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
     std::println("WaitGroup:   {:>8} us  ({:>12} events/sec)",

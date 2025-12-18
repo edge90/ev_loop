@@ -164,23 +164,23 @@ TEST_CASE("GroupEventLoop construction", "[group_event_loop]")
   SECTION("Single group construction")
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
-    const Loop loop;
-    REQUIRE_FALSE(loop.is_running());
+    auto loop = Loop::setup().create_unique();
+    REQUIRE_FALSE(loop->is_running());
     STATIC_REQUIRE(Loop::group_count == 1);
   }
 
   SECTION("Multiple groups construction")
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::WaitGroup<ReceiverB>>;
-    const Loop loop;
-    REQUIRE_FALSE(loop.is_running());
+    auto loop = Loop::setup().create_unique();
+    REQUIRE_FALSE(loop->is_running());
     STATIC_REQUIRE(Loop::group_count == 2);
   }
 
   SECTION("Group with multiple receivers")
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA, ReceiverB, ReceiverC>>;
-    const Loop loop;
+    auto loop = Loop::setup().create_unique();
     STATIC_REQUIRE(Loop::group_count == 1);
   }
 }
@@ -193,25 +193,27 @@ TEST_CASE("GroupEventLoop receiver access", "[group_event_loop]")
 {
   SECTION("Access receiver in single group")
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>> loop;
-    auto& receiver = loop.get<ReceiverA>();
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+    auto loop = Loop::setup().create_unique();
+    auto& receiver = loop->get<ReceiverA>();
     REQUIRE(receiver.count.load() == 0);
     receiver.count.store(kTestValue4);
-    REQUIRE(loop.get<ReceiverA>().count.load() == kTestValue4);
+    REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue4);
   }
 
   SECTION("Access receivers across multiple groups")
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::WaitGroup<ReceiverB>> loop;
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::WaitGroup<ReceiverB>>;
+    auto loop = Loop::setup().create_unique();
 
-    auto& recv_a = loop.get<ReceiverA>();
-    auto& recv_b = loop.get<ReceiverB>();
+    auto& recv_a = loop->get<ReceiverA>();
+    auto& recv_b = loop->get<ReceiverB>();
 
     recv_a.count.store(1);
     recv_b.count.store(2);
 
-    REQUIRE(loop.get<ReceiverA>().count.load() == 1);
-    REQUIRE(loop.get<ReceiverB>().count.load() == 2);
+    REQUIRE(loop->get<ReceiverA>().count.load() == 1);
+    REQUIRE(loop->get<ReceiverB>().count.load() == 2);
   }
 }
 
@@ -223,29 +225,41 @@ TEST_CASE("GroupEventLoop start and stop", "[group_event_loop]")
 {
   SECTION("start sets running flag")
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>> loop;
-    REQUIRE_FALSE(loop.is_running());
-    loop.start();
-    REQUIRE(loop.is_running());
-    loop.stop();
-    REQUIRE_FALSE(loop.is_running());
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
+    auto loop = Loop::setup().create_unique();
+    REQUIRE_FALSE(loop->is_running());
+    loop->start();
+    REQUIRE(loop->is_running());
+    loop->stop();
+    REQUIRE_FALSE(loop->is_running());
   }
 
   SECTION("stop is idempotent")
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>> loop;
-    loop.start();
-    loop.stop();
-    loop.stop(); // Should not crash
-    REQUIRE_FALSE(loop.is_running());
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
+    auto loop = Loop::setup().create_unique();
+    loop->start();
+    loop->stop();
+    loop->stop(); // Should not crash
+    REQUIRE_FALSE(loop->is_running());
   }
 
   SECTION("destructor calls stop")
   {
-    auto loop = std::make_unique<ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>>();
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
+    auto loop = Loop::setup().create_unique();
     loop->start();
     REQUIRE(loop->is_running());
     loop.reset(); // Destructor should stop cleanly
+  }
+
+  SECTION("Builder::start() returns running loop")
+  {
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
+    auto loop = Loop::setup().start_unique();
+    REQUIRE(loop->is_running());
+    loop->stop();
+    REQUIRE_FALSE(loop->is_running());
   }
 }
 
@@ -546,62 +560,53 @@ TEST_CASE("Group all events trait", "[group_event_loop]")
 // Event routing tests
 // =============================================================================
 
-TEST_CASE("GroupEventLoop external emit routes to receiver", "[group_event_loop]")
+TEST_CASE("GroupEventLoop prime routes to receiver", "[group_event_loop]")
 {
-  ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>> loop;
-  loop.start();
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
 
-  // Give the thread time to start
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  // Emit event externally
-  loop.emit(EventA{ .value = kTestValue4 });
+  // Prime event then start
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue4 }).start_unique();
 
   // Give time for event to be processed
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
-  loop.stop();
+  loop->stop();
 
-  REQUIRE(loop.get<CounterReceiver>().count.load() == 1);
+  REQUIRE(loop->get<CounterReceiver>().count.load() == 1);
 }
 
-TEST_CASE("GroupEventLoop multiple external emits", "[group_event_loop]")
+TEST_CASE("GroupEventLoop multiple primed events", "[group_event_loop]")
 {
-  ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>> loop;
-  loop.start();
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+
+  // Prime multiple events then start
+  auto loop = Loop::setup()
+                .prime(EventA{ .value = kTestValue1 })
+                .prime(EventA{ .value = kTestValue2 })
+                .prime(EventA{ .value = kTestValue3 })
+                .start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
-  loop.emit(EventA{ .value = kTestValue1 });
-  loop.emit(EventA{ .value = kTestValue2 });
-  loop.emit(EventA{ .value = kTestValue3 });
-
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  loop.stop();
+  loop->stop();
 
   // ReceiverA adds the event values
-  REQUIRE(loop.get<ReceiverA>().count.load() == kTestValue1 + kTestValue2 + kTestValue3);
+  REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1 + kTestValue2 + kTestValue3);
 }
 
 TEST_CASE("GroupEventLoop events route to correct group", "[group_event_loop]")
 {
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::SpinGroup<ReceiverB>>;
-  Loop loop;
-  loop.start();
-
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
   // EventA should go to ReceiverA, EventB should go to ReceiverB
-  loop.emit(EventA{ .value = kTestValue1 });
-  loop.emit(EventB{ .value = kTestValue2 });
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).prime(EventB{ .value = kTestValue2 }).start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
-  loop.stop();
+  loop->stop();
 
-  REQUIRE(loop.get<ReceiverA>().count.load() == kTestValue1);
-  REQUIRE(loop.get<ReceiverB>().count.load() == kTestValue2);
+  REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
+  REQUIRE(loop->get<ReceiverB>().count.load() == kTestValue2);
 }
 
 // Receiver that emits to another group
@@ -623,20 +628,16 @@ struct EmitterReceiver
 TEST_CASE("GroupEventLoop inter-group emission", "[group_event_loop]")
 {
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<EmitterReceiver>, ev_loop::SpinGroup<ReceiverB>>;
-  Loop loop;
-  loop.start();
+
+  // Prime EventA to EmitterReceiver, which will emit EventB to ReceiverB
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
-  // Emit EventA to EmitterReceiver, which will emit EventB to ReceiverB
-  loop.emit(EventA{ .value = kTestValue1 });
+  loop->stop();
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  loop.stop();
-
-  REQUIRE(loop.get<EmitterReceiver>().received.load() == 1);
-  REQUIRE(loop.get<ReceiverB>().count.load() == kTestValue1 * 2);
+  REQUIRE(loop->get<EmitterReceiver>().received.load() == 1);
+  REQUIRE(loop->get<ReceiverB>().count.load() == kTestValue1 * 2);
 }
 
 // Receiver that emits to same group
@@ -658,20 +659,16 @@ struct SameGroupEmitter
 TEST_CASE("GroupEventLoop intra-group emission", "[group_event_loop]")
 {
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<SameGroupEmitter>>;
-  Loop loop;
-  loop.start();
+
+  // Prime EventA with value 3, should trigger chain: 3 -> 2 -> 1
+  auto loop = Loop::setup().prime(EventA{ .value = 3 }).start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
-  // Emit EventA with value 3, should trigger chain: 3 -> 2 -> 1
-  loop.emit(EventA{ .value = 3 });
-
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  loop.stop();
+  loop->stop();
 
   // Receiver should have been called 3 times (value=3, value=2, value=1)
-  REQUIRE(loop.get<SameGroupEmitter>().received.load() == 3);
+  REQUIRE(loop->get<SameGroupEmitter>().received.load() == 3);
 }
 
 // Receiver that emits EventB (for testing intra-group routing to different receiver)
@@ -693,20 +690,16 @@ TEST_CASE("GroupEventLoop intra-group routing between different receivers", "[gr
 {
   // Both receivers in same group: Producer receives EventA, emits EventB to Consumer
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<IntraGroupProducer, ReceiverB>>;
-  Loop loop;
-  loop.start();
+
+  // Prime EventA to Producer, which emits EventB to ReceiverB (same group)
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
-  // Emit EventA to Producer, which emits EventB to ReceiverB (same group)
-  loop.emit(EventA{ .value = kTestValue1 });
+  loop->stop();
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  loop.stop();
-
-  REQUIRE(loop.get<IntraGroupProducer>().received.load() == 1);
-  REQUIRE(loop.get<ReceiverB>().count.load() == kTestValue1 * 3);
+  REQUIRE(loop->get<IntraGroupProducer>().received.load() == 1);
+  REQUIRE(loop->get<ReceiverB>().count.load() == kTestValue1 * 3);
 }
 
 // Second EventB receiver for multi-group broadcast test
@@ -728,22 +721,18 @@ TEST_CASE("GroupEventLoop broadcasts to all groups handling event", "[group_even
   // EmitterReceiver emits EventB, which should go to BOTH ReceiverB and ReceiverB2
   using Loop = ev_loop::
     GroupEventLoop<ev_loop::SpinGroup<EmitterReceiver>, ev_loop::SpinGroup<ReceiverB>, ev_loop::SpinGroup<ReceiverB2>>;
-  Loop loop;
-  loop.start();
+
+  // Prime EventA -> EmitterReceiver emits EventB -> should go to both group 1 and group 2
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
-  // Emit EventA -> EmitterReceiver emits EventB -> should go to both group 1 and group 2
-  loop.emit(EventA{ .value = kTestValue1 });
+  loop->stop();
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  loop.stop();
-
-  REQUIRE(loop.get<EmitterReceiver>().received.load() == 1);
+  REQUIRE(loop->get<EmitterReceiver>().received.load() == 1);
   // Both receivers should get the same EventB
-  REQUIRE(loop.get<ReceiverB>().count.load() == kTestValue1 * 2);
-  REQUIRE(loop.get<ReceiverB2>().count.load() == kTestValue1 * 2);
+  REQUIRE(loop->get<ReceiverB>().count.load() == kTestValue1 * 2);
+  REQUIRE(loop->get<ReceiverB2>().count.load() == kTestValue1 * 2);
 }
 
 // =============================================================================
@@ -810,26 +799,22 @@ TEST_CASE("GroupEventLoop copy/move optimization - single group with 3 receivers
   // Single group with 3 receivers wanting the same event
   // Expected: 2 copies, 1 move for intra-group dispatch (copy to N-1, move to last)
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<TrackedReceiver1, TrackedReceiver2, TrackedReceiver3>>;
-  Loop loop;
 
   auto counter = std::make_shared<TrackingCounter>();
 
-  loop.start();
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  // Emit a TrackedEvent
-  loop.emit(TrackedEvent{ counter, kTestValue4 });
+  // Prime and start
+  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-  loop.stop();
+  loop->stop();
 
   // All 3 receivers should have received the event
-  REQUIRE(loop.get<TrackedReceiver1>().received.load() == 1);
-  REQUIRE(loop.get<TrackedReceiver2>().received.load() == 1);
-  REQUIRE(loop.get<TrackedReceiver3>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiver1>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiver2>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiver3>().received.load() == 1);
 
   // Copy/move counts:
-  // - External emit to queue: 1 copy (into queue)
+  // - Prime to queue: 1 copy (into queue)
   // - Intra-group dispatch to 3 receivers: 2 copies (to receivers 1,2), 1 move (to receiver 3)
   // Total: 3 copies, 1 move
   INFO("Copy count: " << counter->copy_count.load());
@@ -846,22 +831,18 @@ TEST_CASE("GroupEventLoop copy/move optimization - two groups with 1 receiver ea
   // Simple case: 2 groups, 1 receiver each
   using Loop =
     ev_loop::GroupEventLoop<ev_loop::SpinGroup<TrackedReceiverG1R1>, ev_loop::SpinGroup<TrackedReceiverG2R1>>;
-  Loop loop;
 
   auto counter = std::make_shared<TrackingCounter>();
 
-  loop.start();
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  loop.emit(TrackedEvent{ counter, kTestValue4 });
+  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-  loop.stop();
+  loop->stop();
 
-  INFO("G1R1 received: " << loop.get<TrackedReceiverG1R1>().received.load());
-  INFO("G2R1 received: " << loop.get<TrackedReceiverG2R1>().received.load());
-  REQUIRE(loop.get<TrackedReceiverG1R1>().received.load() == 1);
-  REQUIRE(loop.get<TrackedReceiverG2R1>().received.load() == 1);
+  INFO("G1R1 received: " << loop->get<TrackedReceiverG1R1>().received.load());
+  INFO("G2R1 received: " << loop->get<TrackedReceiverG2R1>().received.load());
+  REQUIRE(loop->get<TrackedReceiverG1R1>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiverG2R1>().received.load() == 1);
 
   INFO("Copy count: " << counter->copy_count.load());
   INFO("Move count: " << counter->move_count.load());
@@ -875,29 +856,25 @@ TEST_CASE("GroupEventLoop copy/move optimization - two groups with 3 receivers e
   using Loop =
     ev_loop::GroupEventLoop<ev_loop::SpinGroup<TrackedReceiverG1R1, TrackedReceiverG1R2, TrackedReceiverG1R3>,
       ev_loop::SpinGroup<TrackedReceiverG2R1, TrackedReceiverG2R2, TrackedReceiverG2R3>>;
-  Loop loop;
 
   auto counter = std::make_shared<TrackingCounter>();
 
-  loop.start();
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-
-  // Emit a TrackedEvent - should go to both groups
-  loop.emit(TrackedEvent{ counter, kTestValue4 });
+  // Prime and start - event should go to both groups
+  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).start_unique();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-  loop.stop();
+  loop->stop();
 
   // All 6 receivers should have received the event
-  REQUIRE(loop.get<TrackedReceiverG1R1>().received.load() == 1);
-  REQUIRE(loop.get<TrackedReceiverG1R2>().received.load() == 1);
-  REQUIRE(loop.get<TrackedReceiverG1R3>().received.load() == 1);
-  REQUIRE(loop.get<TrackedReceiverG2R1>().received.load() == 1);
-  REQUIRE(loop.get<TrackedReceiverG2R2>().received.load() == 1);
-  REQUIRE(loop.get<TrackedReceiverG2R3>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiverG1R1>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiverG1R2>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiverG1R3>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiverG2R1>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiverG2R2>().received.load() == 1);
+  REQUIRE(loop->get<TrackedReceiverG2R3>().received.load() == 1);
 
   // Copy/move counts:
-  // - External emit routes to 2 groups: 1 copy (to group 1 queue), 1 move (to group 2 queue)
+  // - Prime routes to 2 groups: 1 copy (to group 1 queue), 1 move (to group 2 queue)
   // - Group 1 intra-dispatch to 3 receivers: 2 copies, 1 move
   // - Group 2 intra-dispatch to 3 receivers: 2 copies, 1 move
   // Total: 5 copies, 3 moves (theoretical minimum)

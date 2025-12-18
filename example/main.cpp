@@ -124,34 +124,30 @@ int main()
   {
     // Group 0: Logger, Controller - polled on main thread
     // Group 1: Processor - runs on background thread
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<Logger, Controller>, ev_loop::SpinGroup<Processor>> loop;
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<Logger, Controller>, ev_loop::SpinGroup<Processor>>;
 
-    // Emit events BEFORE starting (emit is only safe before start)
-    loop.emit(StartEvent{ 1 });
-    loop.emit(StartEvent{ 2 });
-
-    // Start all groups (both run on threads)
-    loop.start();
+    // Prime events and start
+    auto loop = Loop::setup().prime(StartEvent{ 1 }).prime(StartEvent{ 2 }).start_unique();
 
     // Wait for processing to complete
     std::this_thread::sleep_for(std::chrono::milliseconds(kThreadedReceiverDelayMs));
 
-    loop.stop();
-    std::println("Processor handled {} events\n", loop.get<Processor>().counter);
+    loop->stop();
+    std::println("Processor handled {} events\n", loop->get<Processor>().counter);
   }
 
   // Test 2: Chain events (demonstrates queue-based dispatch prevents recursion)
   // Single group to show intra-group event chaining
   std::println("--- Test 2: Chain events (queue prevents recursion) ---");
   {
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<Logger, ChainHandler>> loop;
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<Logger, ChainHandler>>;
 
-    // Emit chain event before polling
-    loop.emit(ChainEvent{ 1 });
+    // Prime chain event then poll manually
+    auto loop = Loop::setup().prime(ChainEvent{ 1 }).create_unique();
 
     // Each ChainEvent handler emits another ChainEvent via queue
     // Without queue dispatch, this would cause stack recursion
-    while (loop.poll_group<0>()) {}
+    while (loop->poll_group<0>()) {}
   }
 
   std::println("\n=== Demo Complete ===");
