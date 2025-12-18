@@ -6,6 +6,7 @@
 #include <print>
 #include <thread>
 #include <tuple>
+#include <vector>
 
 // =============================================================================
 // Event types
@@ -224,6 +225,41 @@ struct MpscCollector
 };
 
 // =============================================================================
+// External emitter benchmark types
+// =============================================================================
+
+// External input definitions - each defines what events can be emitted
+struct ExternalInputs1
+{
+  using emits = ev_loop::type_list<Ping>;
+};
+struct ExternalInputs2
+{
+  using emits = ev_loop::type_list<Ping>;
+};
+struct ExternalInputs3
+{
+  using emits = ev_loop::type_list<Ping>;
+};
+struct ExternalInputs4
+{
+  using emits = ev_loop::type_list<Ping>;
+};
+
+// Collector that receives external Ping events
+struct ExternalCollector
+{
+  using receives = ev_loop::type_list<Ping>;
+  using emits = ev_loop::type_list<>;
+  std::atomic<int> count{ 0 };
+
+  template<typename Dispatcher> void on_event(Ping /*event*/, Dispatcher& /*dispatcher*/)
+  {
+    count.fetch_add(1, std::memory_order_relaxed);
+  }
+};
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -242,68 +278,50 @@ template<typename Count, typename Duration> auto ns_per_event(Count event_count,
   return total_ns / static_cast<long long>(event_count);
 }
 
-} // namespace
-
 // =============================================================================
-// Main
+// Benchmark functions
 // =============================================================================
 
-// NOLINTNEXTLINE(bugprone-exception-escape)
-int main()
+void bench_single_thread(int iterations)
 {
   using namespace std::chrono;
-
-  constexpr int kIterations = 10'000'000;
-
-  std::println("=== GroupEventLoop Benchmark ===");
-  std::println("Poll iterations: {}", kIterations);
-  std::println("Ping-pong limit: {}\n", kPingPongLimit);
-
-  // =====================================================================
-  // Single-thread benchmarks (manual polling)
-  // =====================================================================
   std::println("=== Single-Thread (Manual Poll) ===\n");
 
-  // ---------------------------------------------------------------------
   // SpinGroup - manual polling
-  // ---------------------------------------------------------------------
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA, ReceiverB>>;
     auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
+    for (int i = 0; i < iterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
-    const auto eps = events_per_second(kIterations, elapsed);
-    std::println("SpinGroup:   {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(kIterations, elapsed));
+    const auto eps = events_per_second(iterations, elapsed);
+    std::println("SpinGroup:   {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(iterations, elapsed));
   }
 
-  // ---------------------------------------------------------------------
   // YieldGroup - manual polling
-  // ---------------------------------------------------------------------
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::YieldGroup<ReceiverA, ReceiverB>>;
     auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
+    for (int i = 0; i < iterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
-    const auto eps = events_per_second(kIterations, elapsed);
-    std::println("YieldGroup:  {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(kIterations, elapsed));
+    const auto eps = events_per_second(iterations, elapsed);
+    std::println("YieldGroup:  {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(iterations, elapsed));
   }
+}
 
-  // =====================================================================
-  // Multi-thread benchmarks (background threads)
-  // =====================================================================
+void bench_multi_thread()
+{
+  using namespace std::chrono;
   std::println("\n=== Multi-Thread (2 Groups, 2 Threads) ===\n");
 
   constexpr int kMultiIterations = 1'000'000;
 
-  // ---------------------------------------------------------------------
   // 2 SpinGroups - each on own thread
-  // ---------------------------------------------------------------------
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<GroupA>, ev_loop::SpinGroup<GroupB>>;
     auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
@@ -320,9 +338,7 @@ int main()
     loop->stop();
   }
 
-  // ---------------------------------------------------------------------
   // 2 WaitGroups - each on own thread
-  // ---------------------------------------------------------------------
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::WaitGroup<GroupA>, ev_loop::WaitGroup<GroupB>>;
     auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
@@ -338,15 +354,14 @@ int main()
 
     loop->stop();
   }
+}
 
-  // =====================================================================
-  // Ping-Pong benchmarks (true back-and-forth until limit)
-  // =====================================================================
+void bench_ping_pong()
+{
+  using namespace std::chrono;
   std::println("\n=== Ping-Pong (Until {} Events) ===\n", kPingPongLimit * 2);
 
-  // ---------------------------------------------------------------------
   // Single group ping-pong (intra-group dispatch)
-  // ---------------------------------------------------------------------
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<PingPongA, PingPongB>>;
     auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
@@ -361,9 +376,7 @@ int main()
     std::println("1 Group (intra-group):  {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
   }
 
-  // ---------------------------------------------------------------------
   // Two groups ping-pong (inter-group dispatch via queues) - SPSC
-  // ---------------------------------------------------------------------
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<PingPongGrpA>, ev_loop::SpinGroup<PingPongGrpB>>;
     auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
@@ -382,10 +395,7 @@ int main()
     loop->stop();
   }
 
-  // ---------------------------------------------------------------------
   // Three groups: 2 producers → 1 collector (MPSC queue auto-selected)
-  // Producer1 and Producer2 both emit MpscEvent to Collector
-  // ---------------------------------------------------------------------
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<MpscProducer1>,
       ev_loop::SpinGroup<MpscProducer2>,
@@ -394,7 +404,6 @@ int main()
 
     const auto started = steady_clock::now();
 
-    // Wait for collector to process enough events
     while (loop->get<MpscCollector>().count.load(std::memory_order_relaxed) < kPingPongLimit) {
       std::this_thread::yield();
     }
@@ -408,9 +417,7 @@ int main()
     loop->stop();
   }
 
-  // ---------------------------------------------------------------------
   // Five groups: 4 producers → 1 collector (MPSC queue auto-selected)
-  // ---------------------------------------------------------------------
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<MpscProducer1>,
       ev_loop::SpinGroup<MpscProducer2>,
@@ -421,7 +428,6 @@ int main()
 
     const auto started = steady_clock::now();
 
-    // Wait for collector to process enough events
     while (loop->get<MpscCollector>().count.load(std::memory_order_relaxed) < kPingPongLimit) {
       std::this_thread::yield();
     }
@@ -435,6 +441,216 @@ int main()
 
     loop->stop();
   }
+}
+
+void bench_external_1_thread()
+{
+  using namespace std::chrono;
+
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalCollector>, ev_loop::ExternalGroup<ExternalInputs1>>;
+  auto loop = Loop::setup().create_unique();
+  auto emitter = loop->get_external_emitter<ExternalInputs1>();
+
+  constexpr int kExternalEvents = 100'000;
+
+  // External thread emits events with retry on queue full
+  std::thread external_thread([&emitter]() {
+    for (int i = 0; i < kExternalEvents; ++i) {
+      while (!emitter.emit(Ping{ i })) { std::this_thread::yield(); }
+    }
+  });
+
+  const auto started = steady_clock::now();
+
+  // Main thread polls external inbox
+  while (loop->get<ExternalCollector>().count.load(std::memory_order_relaxed) < kExternalEvents) {
+    loop->poll_external();
+    loop->poll_group<0>();
+  }
+  const auto elapsed = steady_clock::now() - started;
+
+  external_thread.join();
+
+  const int total = loop->get<ExternalCollector>().count.load();
+  const auto eps = events_per_second(total, elapsed);
+  std::println("1 External Thread:      {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
+}
+
+void bench_external_4_threads_1_group()
+{
+  using namespace std::chrono;
+
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalCollector>, ev_loop::ExternalGroup<ExternalInputs1>>;
+  auto loop = Loop::setup().create_unique();
+  auto emitter = loop->get_external_emitter<ExternalInputs1>();
+
+  constexpr int kEventsPerThread = 100'000;
+  constexpr int kNumThreads = 4;
+  constexpr int kTotalEvents = kEventsPerThread * kNumThreads;
+
+  std::vector<std::thread> threads;
+  threads.reserve(kNumThreads);
+
+  const auto started = steady_clock::now();
+
+  for (int idx = 0; idx < kNumThreads; ++idx) {
+    threads.emplace_back([emitter]() {
+      for (int i = 0; i < kEventsPerThread; ++i) {
+        while (!emitter.emit(Ping{ i })) { std::this_thread::yield(); }
+      }
+    });
+  }
+
+  while (loop->get<ExternalCollector>().count.load(std::memory_order_relaxed) < kTotalEvents) {
+    loop->poll_external();
+    loop->poll_group<0>();
+  }
+  const auto elapsed = steady_clock::now() - started;
+
+  for (auto& thread : threads) { thread.join(); }
+
+  const int total = loop->get<ExternalCollector>().count.load();
+  const auto eps = events_per_second(total, elapsed);
+  std::println("4 Ext (1 group):        {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
+}
+
+void bench_external_4_threads_2_groups()
+{
+  using namespace std::chrono;
+
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalCollector>,
+    ev_loop::ExternalGroup<ExternalInputs1>,
+    ev_loop::ExternalGroup<ExternalInputs2>>;
+  auto loop = Loop::setup().create_unique();
+  auto emitter1 = loop->get_external_emitter<ExternalInputs1>();
+  auto emitter2 = loop->get_external_emitter<ExternalInputs2>();
+
+  constexpr int kEventsPerThread = 100'000;
+  constexpr int kThreadsPerGroup = 2;
+  constexpr int kTotalEvents = kEventsPerThread * kThreadsPerGroup * 2;
+
+  std::vector<std::thread> threads;
+  threads.reserve(static_cast<std::size_t>(kThreadsPerGroup) * 2);
+
+  const auto started = steady_clock::now();
+
+  // 2 threads for ExternalGroup 1
+  for (int idx = 0; idx < kThreadsPerGroup; ++idx) {
+    threads.emplace_back([emitter1]() {
+      for (int i = 0; i < kEventsPerThread; ++i) {
+        while (!emitter1.emit(Ping{ i })) { std::this_thread::yield(); }
+      }
+    });
+  }
+
+  // 2 threads for ExternalGroup 2
+  for (int idx = 0; idx < kThreadsPerGroup; ++idx) {
+    threads.emplace_back([emitter2]() {
+      for (int i = 0; i < kEventsPerThread; ++i) {
+        while (!emitter2.emit(Ping{ i })) { std::this_thread::yield(); }
+      }
+    });
+  }
+
+  while (loop->get<ExternalCollector>().count.load(std::memory_order_relaxed) < kTotalEvents) {
+    loop->poll_all_external();
+    loop->poll_group<0>();
+  }
+  const auto elapsed = steady_clock::now() - started;
+
+  for (auto& thread : threads) { thread.join(); }
+
+  const int total = loop->get<ExternalCollector>().count.load();
+  const auto eps = events_per_second(total, elapsed);
+  std::println("4 Ext (2 groups):       {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
+}
+
+void bench_external_4_threads_4_groups()
+{
+  using namespace std::chrono;
+
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalCollector>,
+    ev_loop::ExternalGroup<ExternalInputs1>,
+    ev_loop::ExternalGroup<ExternalInputs2>,
+    ev_loop::ExternalGroup<ExternalInputs3>,
+    ev_loop::ExternalGroup<ExternalInputs4>>;
+  auto loop = Loop::setup().create_unique();
+  auto emitter1 = loop->get_external_emitter<ExternalInputs1>();
+  auto emitter2 = loop->get_external_emitter<ExternalInputs2>();
+  auto emitter3 = loop->get_external_emitter<ExternalInputs3>();
+  auto emitter4 = loop->get_external_emitter<ExternalInputs4>();
+
+  constexpr int kEventsPerThread = 100'000;
+  constexpr int kTotalEvents = kEventsPerThread * 4;
+
+  const auto started = steady_clock::now();
+
+  std::thread thread1([emitter1]() {
+    for (int i = 0; i < kEventsPerThread; ++i) {
+      while (!emitter1.emit(Ping{ i })) { std::this_thread::yield(); }
+    }
+  });
+  std::thread thread2([emitter2]() {
+    for (int i = 0; i < kEventsPerThread; ++i) {
+      while (!emitter2.emit(Ping{ i })) { std::this_thread::yield(); }
+    }
+  });
+  std::thread thread3([emitter3]() {
+    for (int i = 0; i < kEventsPerThread; ++i) {
+      while (!emitter3.emit(Ping{ i })) { std::this_thread::yield(); }
+    }
+  });
+  std::thread thread4([emitter4]() {
+    for (int i = 0; i < kEventsPerThread; ++i) {
+      while (!emitter4.emit(Ping{ i })) { std::this_thread::yield(); }
+    }
+  });
+
+  while (loop->get<ExternalCollector>().count.load(std::memory_order_relaxed) < kTotalEvents) {
+    loop->poll_all_external();
+    loop->poll_group<0>();
+  }
+  const auto elapsed = steady_clock::now() - started;
+
+  thread1.join();
+  thread2.join();
+  thread3.join();
+  thread4.join();
+
+  const int total = loop->get<ExternalCollector>().count.load();
+  const auto eps = events_per_second(total, elapsed);
+  std::println("4 Ext (4 groups):       {:>12} events/sec  ({:>3} ns/event)", eps, ns_per_event(total, elapsed));
+}
+
+void bench_external()
+{
+  std::println("\n=== External -> Internal ===\n");
+
+  bench_external_1_thread();
+  bench_external_4_threads_1_group();
+  bench_external_4_threads_2_groups();
+  bench_external_4_threads_4_groups();
+}
+
+} // namespace
+
+// =============================================================================
+// Main
+// =============================================================================
+
+// NOLINTNEXTLINE(bugprone-exception-escape)
+int main()
+{
+  constexpr int kIterations = 10'000'000;
+
+  std::println("=== GroupEventLoop Benchmark ===");
+  std::println("Poll iterations: {}", kIterations);
+  std::println("Ping-pong limit: {}\n", kPingPongLimit);
+
+  bench_single_thread(kIterations);
+  bench_multi_thread();
+  bench_ping_pong();
+  bench_external();
 
   std::println("\nDone.");
   return 0;

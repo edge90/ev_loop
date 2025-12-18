@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <memory>
 #include <thread>
 #include <tuple>
 #include <type_traits>
@@ -63,6 +64,9 @@ template<typename... Receivers> using WaitGroup = ThreadGroup<Wait, Receivers...
 template<typename... Receivers> using YieldGroup = ThreadGroup<Yield, Receivers...>;
 template<typename... Receivers> using HybridGroup = ThreadGroup<Hybrid, Receivers...>;
 
+// Forward declaration for ExternalGroup (full definition after detail namespace)
+template<typename T> struct ExternalGroup;
+
 // =============================================================================
 // Implementation details
 // =============================================================================
@@ -84,7 +88,30 @@ namespace detail {
   // Type at index
   template<std::size_t I, typename... Ts> using type_at_t = std::tuple_element_t<I, std::tuple<Ts...>>;
 
-  // Filter type list by predicate - forward declaration, implementation after concat_type_lists
+  // Operator for fold-based concatenation
+  template<typename... Ls, typename... Rs>
+  consteval auto operator+(type_list<Ls...> /*unused*/, type_list<Rs...> /*unused*/) -> type_list<Ls..., Rs...>
+  {
+    return {};
+  }
+
+  // Helper function for MSVC - fold in function body lets compiler deduce type
+  template<typename... Lists> consteval auto concat_type_lists_fn() { return (type_list<>{} + ... + Lists{}); }
+
+  // Concatenate multiple type_lists using fold expression (O(1) instantiation depth)
+  template<typename... Lists> struct concat_type_lists
+  {
+    using type = decltype(concat_type_lists_fn<Lists...>());
+  };
+
+  template<> struct concat_type_lists<>
+  {
+    using type = type_list<>;
+  };
+
+  template<typename... Lists> using concat_lists_t = typename concat_type_lists<Lists...>::type;
+
+  // Filter type list by predicate - forward declaration, implementation later
   template<template<typename> class Pred, typename... Ts> struct filter_fold;
   template<template<typename> class Pred, typename List> struct filter_list;
 
@@ -110,6 +137,13 @@ namespace detail {
   template<typename Strategy, typename... Receivers> struct group_receivers<ThreadGroup<Strategy, Receivers...>>
   {
     using type = type_list<Receivers...>;
+  };
+
+  // Forward declaration for ExternalGroup (defined outside detail namespace)
+  // Specialization for ExternalGroup - no receivers
+  template<typename T> struct group_receivers<::ev_loop::ExternalGroup<T>>
+  {
+    using type = type_list<>;
   };
 
   template<typename Group> using group_receivers_t = typename group_receivers<Group>::type;
@@ -363,6 +397,252 @@ namespace detail {
   // Legacy Inbox alias - use SpscInbox for backward compatibility
   template<typename T, std::size_t Capacity = 4096> using Inbox = SpscInbox<T, Capacity>;
 
+  // Type trait to detect ExternalGroup (template specialization)
+  template<typename T> struct is_external_group : std::false_type
+  {
+  };
+  template<typename U> struct is_external_group<::ev_loop::ExternalGroup<U>> : std::true_type
+  {
+  };
+  template<typename T> inline constexpr bool is_external_group_v = is_external_group<T>::value;
+
+} // namespace detail
+
+// =============================================================================
+// ExternalInbox: MPSC inbox for external threads to push events
+// Lives in shared_ptr so it outlives the EventLoop if needed
+// =============================================================================
+
+template<typename... Events> class ExternalInbox
+{
+  // One MPSC queue per event type (external threads are multiple producers)
+  std::tuple<detail::MpscInbox<Events>...> inboxes_;
+
+public:
+  ExternalInbox() = default;
+
+  // Push an event (thread-safe, called by external threads)
+  template<typename Event> bool push(Event&& event)
+  {
+    static_assert(
+      (std::is_same_v<std::decay_t<Event>, Events> || ...), "Event type not supported by this ExternalInbox");
+    return std::get<detail::MpscInbox<std::decay_t<Event>>>(inboxes_).push(std::forward<Event>(event));
+  }
+
+  // Pop an event (single consumer, called by EventLoop)
+  template<typename Event> bool try_pop(Event& out)
+  {
+    static_assert((std::is_same_v<Event, Events> || ...), "Event type not supported by this ExternalInbox");
+    return std::get<detail::MpscInbox<Event>>(inboxes_).try_pop(out);
+  }
+
+  // Check if a specific event queue is empty
+  template<typename Event> [[nodiscard]] bool empty() const noexcept
+  {
+    return std::get<detail::MpscInbox<Event>>(inboxes_).empty();
+  }
+};
+
+// =============================================================================
+// ExternalEmitter: Handle for external threads to emit events
+// Holds shared_ptr<ExternalInbox> - keeps inbox alive independently of EventLoop
+// =============================================================================
+
+template<typename... Events> class ExternalEmitter
+{
+  std::shared_ptr<ExternalInbox<Events...>> inbox_;
+
+public:
+  ExternalEmitter() = default;
+  explicit ExternalEmitter(std::shared_ptr<ExternalInbox<Events...>> inbox) : inbox_(std::move(inbox)) {}
+
+  // Emit an event (thread-safe)
+  // Returns true if event was queued, false if queue was full
+  template<typename Event> bool emit(Event&& event) const
+  {
+    if (!inbox_) [[unlikely]] { return false; }
+    return inbox_->push(std::forward<Event>(event));
+  }
+
+  // Check if the emitter is valid (has an inbox)
+  [[nodiscard]] explicit operator bool() const noexcept { return inbox_ != nullptr; }
+};
+
+// =============================================================================
+// ExternalGroup: Marker type for external event emitters in GroupEventLoop
+// External threads can emit events via shared_ptr handle
+// =============================================================================
+
+// T defines what events can be emitted via `using emits = type_list<...>`
+// T also serves as the identity (tag) for get_external_emitter<T>()
+//
+// Usage:
+//   struct NetworkInputs { using emits = type_list<Ping, Pong>; };
+//   using Loop = GroupEventLoop<SpinGroup<MyReceiver>, ExternalGroup<NetworkInputs>>;
+//   auto emitter = loop->get_external_emitter<NetworkInputs>();
+template<typename T> struct ExternalGroup
+{
+  using tag = T;
+  using emits = typename T::emits;
+  using receives = type_list<>; // External group doesn't receive, only emits
+};
+
+namespace detail {
+
+  // Extract event types from ExternalGroup
+  template<typename T> struct external_group_events
+  {
+    using type = type_list<>;
+  };
+  template<typename U> struct external_group_events<ExternalGroup<U>>
+  {
+    using type = typename ExternalGroup<U>::emits;
+  };
+  template<typename T> using external_group_events_t = typename external_group_events<T>::type;
+
+  // Filter type list to only include ThreadGroups (exclude ExternalGroup)
+  template<typename... Ts> struct filter_thread_groups;
+  template<> struct filter_thread_groups<>
+  {
+    using type = type_list<>;
+  };
+  template<typename First, typename... Rest> struct filter_thread_groups<First, Rest...>
+  {
+    using rest_type = typename filter_thread_groups<Rest...>::type;
+    using type = std::conditional_t<is_external_group_v<First>, rest_type, concat_lists_t<type_list<First>, rest_type>>;
+  };
+  template<typename... Ts> using filter_thread_groups_t = typename filter_thread_groups<Ts...>::type;
+
+  // Find ExternalGroup in parameter pack (returns type_list<> if not found)
+  template<typename... Ts> struct find_external_group;
+  template<> struct find_external_group<>
+  {
+    using type = type_list<>;
+    static constexpr bool found = false;
+  };
+  // Specialization for ExternalGroup - found it
+  template<typename U, typename... Rest> struct find_external_group<ExternalGroup<U>, Rest...>
+  {
+    using type = typename ExternalGroup<U>::emits;
+    static constexpr bool found = true;
+  };
+  // Specialization for non-ExternalGroup - keep searching
+  template<typename First, typename... Rest> struct find_external_group<First, Rest...>
+  {
+    using type = typename find_external_group<Rest...>::type;
+    static constexpr bool found = find_external_group<Rest...>::found;
+  };
+  template<typename... Ts> using find_external_group_events_t = typename find_external_group<Ts...>::type;
+  template<typename... Ts> inline constexpr bool has_external_group_v = find_external_group<Ts...>::found;
+
+  // Count ExternalGroups in parameter pack
+  template<typename... Ts> struct count_external_groups;
+  template<> struct count_external_groups<>
+  {
+    static constexpr std::size_t value = 0;
+  };
+  template<typename First, typename... Rest> struct count_external_groups<First, Rest...>
+  {
+    static constexpr std::size_t value = (is_external_group_v<First> ? 1 : 0) + count_external_groups<Rest...>::value;
+  };
+  template<typename... Ts> inline constexpr std::size_t count_external_groups_v = count_external_groups<Ts...>::value;
+
+  // Collect all ExternalGroups into a type_list
+  template<typename... Ts> struct collect_external_groups;
+  template<> struct collect_external_groups<>
+  {
+    using type = type_list<>;
+  };
+  template<typename First, typename... Rest> struct collect_external_groups<First, Rest...>
+  {
+    using rest_type = typename collect_external_groups<Rest...>::type;
+    using type = std::conditional_t<is_external_group_v<First>, concat_lists_t<type_list<First>, rest_type>, rest_type>;
+  };
+  template<typename... Ts> using collect_external_groups_t = typename collect_external_groups<Ts...>::type;
+
+  // Get the Nth ExternalGroup from parameter pack
+  template<std::size_t N, typename... Ts> struct external_group_at;
+  template<std::size_t N> struct external_group_at<N>
+  {
+    static_assert(N != N, "ExternalGroup index out of bounds");
+  };
+  template<typename U, typename... Rest> struct external_group_at<0, ExternalGroup<U>, Rest...>
+  {
+    using type = ExternalGroup<U>;
+  };
+  template<std::size_t N, typename U, typename... Rest> struct external_group_at<N, ExternalGroup<U>, Rest...>
+  {
+    using type = typename external_group_at<N - 1, Rest...>::type;
+  };
+  template<std::size_t N, typename First, typename... Rest> struct external_group_at<N, First, Rest...>
+  {
+    using type = typename external_group_at<N, Rest...>::type;
+  };
+  template<std::size_t N, typename... Ts> using external_group_at_t = typename external_group_at<N, Ts...>::type;
+
+  // Find index of a specific ExternalGroup type in parameter pack
+  // Works with both ExternalGroup<...> directly and derived types
+  template<typename GroupType, std::size_t Idx, typename... Ts> struct find_external_group_index_impl;
+  template<typename GroupType, std::size_t Idx> struct find_external_group_index_impl<GroupType, Idx>
+  {
+    static constexpr std::size_t value = static_cast<std::size_t>(-1); // Not found
+  };
+  template<typename GroupType, std::size_t Idx, typename First, typename... Rest>
+  struct find_external_group_index_impl<GroupType, Idx, First, Rest...>
+  {
+    static constexpr bool is_match = std::is_same_v<GroupType, First>;
+    static constexpr bool is_ext = is_external_group_v<First>;
+    static constexpr std::size_t next_idx = is_ext ? Idx + 1 : Idx;
+    static constexpr std::size_t value =
+      is_match ? Idx : find_external_group_index_impl<GroupType, next_idx, Rest...>::value;
+  };
+  template<typename GroupType, typename... Ts>
+  inline constexpr std::size_t find_external_group_index_v = find_external_group_index_impl<GroupType, 0, Ts...>::value;
+
+  // Convert type_list<Events...> to ExternalInbox<Events...>
+  template<typename EventList> struct make_external_inbox;
+  template<typename... Events> struct make_external_inbox<type_list<Events...>>
+  {
+    using type = ExternalInbox<Events...>;
+  };
+  template<typename EventList> using make_external_inbox_t = typename make_external_inbox<EventList>::type;
+
+  // Convert type_list<Events...> to ExternalEmitter<Events...>
+  template<typename EventList> struct make_external_emitter;
+  template<typename... Events> struct make_external_emitter<type_list<Events...>>
+  {
+    using type = ExternalEmitter<Events...>;
+  };
+  template<typename EventList> using make_external_emitter_t = typename make_external_emitter<EventList>::type;
+
+  // Convert ExternalGroup (or derived type) to shared_ptr<ExternalInbox<Events...>>
+  template<typename Group> struct external_group_to_inbox_ptr
+  {
+    static_assert(is_external_group_v<Group>, "Group must be an ExternalGroup or derived type");
+    using events = typename Group::emits;
+    using inbox_type = make_external_inbox_t<events>;
+    using type = std::shared_ptr<inbox_type>;
+  };
+  template<typename Group> using external_group_to_inbox_ptr_t = typename external_group_to_inbox_ptr<Group>::type;
+
+  // Convert ExternalGroup (or derived type) to ExternalEmitter<Events...>
+  template<typename Group> struct external_group_to_emitter
+  {
+    static_assert(is_external_group_v<Group>, "Group must be an ExternalGroup or derived type");
+    using events = typename Group::emits;
+    using type = make_external_emitter_t<events>;
+  };
+  template<typename Group> using external_group_to_emitter_t = typename external_group_to_emitter<Group>::type;
+
+  // Make tuple of shared_ptr<ExternalInbox<...>> for each ExternalGroup
+  template<typename GroupList> struct make_external_inboxes_tuple;
+  template<typename... ExtGroups> struct make_external_inboxes_tuple<type_list<ExtGroups...>>
+  {
+    using type = std::tuple<external_group_to_inbox_ptr_t<ExtGroups>...>;
+  };
+  template<typename GroupList>
+  using make_external_inboxes_tuple_t = typename make_external_inboxes_tuple<GroupList>::type;
+
   // =============================================================================
   // GroupWorkSignal: notification primitive for inter-group communication
   // Producer groups signal, consumer groups wait or poll
@@ -471,6 +751,15 @@ namespace detail {
 
   private:
     receiver_tuple receivers_;
+  };
+
+  // GroupStorage specialization for ExternalGroup - empty, no receivers
+  template<typename T> class GroupStorage<ExternalGroup<T>>
+  {
+  public:
+    using group_type = ExternalGroup<T>;
+    static constexpr std::size_t receiver_count = 0;
+    GroupStorage() = default;
   };
 
   // =============================================================================
@@ -635,28 +924,6 @@ namespace detail {
     EventLoopType& event_loop_;
   };
 
-  // Operator for fold-based concatenation
-  template<typename... Ls, typename... Rs>
-  consteval auto operator+(type_list<Ls...> /*unused*/, type_list<Rs...> /*unused*/) -> type_list<Ls..., Rs...>
-  {
-    return {};
-  }
-
-  // Helper function for MSVC - fold in function body lets compiler deduce type
-  template<typename... Lists> consteval auto concat_type_lists_fn() { return (type_list<>{} + ... + Lists{}); }
-
-  // Concatenate multiple type_lists using fold expression (O(1) instantiation depth)
-  template<typename... Lists> struct concat_type_lists
-  {
-    using type = decltype(concat_type_lists_fn<Lists...>());
-  };
-
-  template<> struct concat_type_lists<>
-  {
-    using type = type_list<>;
-  };
-
-
   // =============================================================================
   // Filter implementation using concat (O(log N) depth instead of O(N) recursion)
   // =============================================================================
@@ -686,21 +953,28 @@ namespace detail {
     std::conditional_t<contains_v<Seen, T>, Seen, typename concat_type_lists<Seen, type_list<T>>::type>;
 
   // Unique implementation using fold
-  template<typename... Ts> struct unique_fold
+  template<typename... Ts> struct unique_fold;
+
+  template<> struct unique_fold<>
+  {
+    using type = type_list<>;
+  };
+
+  template<typename First, typename... Rest> struct unique_fold<First, Rest...>
   {
     template<typename Acc, typename T> using folder = unique_accumulate<Acc, T>;
 
     // Manual fold - start with empty, accumulate each type
-    template<typename Acc, typename First, typename... Rest> static consteval auto fold_impl()
+    template<typename Acc, typename F, typename... Rs> static consteval auto fold_impl()
     {
-      if constexpr (sizeof...(Rest) == 0) {
-        return folder<Acc, First>{};
+      if constexpr (sizeof...(Rs) == 0) {
+        return folder<Acc, F>{};
       } else {
-        return fold_impl<folder<Acc, First>, Rest...>();
+        return fold_impl<folder<Acc, F>, Rs...>();
       }
     }
 
-    using type = std::conditional_t<sizeof...(Ts) == 0, type_list<>, decltype(fold_impl<type_list<>, Ts...>())>;
+    using type = decltype(fold_impl<type_list<>, First, Rest...>());
   };
 
   template<typename... Ts> using unique_t = typename unique_fold<Ts...>::type;
@@ -729,6 +1003,12 @@ namespace detail {
     using type = typename concat_type_lists<get_receives_t<Receivers>...>::type;
   };
 
+  // Specialization for ExternalGroup - doesn't receive any events
+  template<typename T> struct group_all_events<ExternalGroup<T>>
+  {
+    using type = type_list<>;
+  };
+
   template<typename Group> using group_all_events_t = typename group_all_events<Group>::type;
 
   // Check if a group handles a specific event
@@ -737,6 +1017,11 @@ namespace detail {
   template<typename Strategy, typename... Receivers, typename Event>
   struct group_handles_event<ThreadGroup<Strategy, Receivers...>, Event>
     : std::bool_constant<(contains_v<get_receives_t<Receivers>, Event> || ...)>
+  {
+  };
+
+  // Specialization for ExternalGroup - doesn't handle any events
+  template<typename T, typename Event> struct group_handles_event<ExternalGroup<T>, Event> : std::false_type
   {
   };
 
@@ -776,6 +1061,13 @@ namespace detail {
   template<typename Strategy, typename... Receivers, typename Event>
   struct group_can_emit_event<ThreadGroup<Strategy, Receivers...>, Event>
     : std::bool_constant<(contains_v<get_emits_t<Receivers>, Event> || ...)>
+  {
+  };
+
+  // Specialization for ExternalGroup - can emit events in its emits list
+  template<typename T, typename Event>
+  struct group_can_emit_event<ExternalGroup<T>, Event>
+    : std::bool_constant<contains_v<typename ExternalGroup<T>::emits, Event>>
   {
   };
 
@@ -885,12 +1177,30 @@ namespace detail {
     }
   };
 
+  // Specialization for ExternalGroup - no queues (doesn't receive events)
+  template<typename T, typename... AllGroups> struct GroupEventQueues<ExternalGroup<T>, AllGroups...>
+  {
+    using handled_events = type_list<>;
+    using queues_type = std::tuple<>;
+
+    queues_type queues_;
+
+    [[nodiscard]] bool empty() const noexcept { return true; }
+  };
+
 } // namespace detail
 
 template<typename... Groups> class GroupEventLoop
 {
-  static_assert(sizeof...(Groups) > 0, "At least one ThreadGroup is required");
-  static_assert((detail::is_thread_group_v<Groups> && ...), "All parameters must be ThreadGroups");
+  static_assert(sizeof...(Groups) > 0, "At least one group is required");
+  static_assert(((detail::is_thread_group_v<Groups> || detail::is_external_group_v<Groups>) && ...),
+    "All parameters must be ThreadGroups or ExternalGroup");
+  // At least one ThreadGroup required (ExternalGroup alone is useless)
+  static_assert((detail::is_thread_group_v<Groups> || ...), "At least one ThreadGroup is required");
+  // No duplicate ExternalGroup types (use different emitter types for load distribution)
+  static_assert(detail::type_list_size_v<detail::collect_external_groups_t<Groups...>>
+                  == detail::type_list_size_v<detail::unique_list_t<detail::collect_external_groups_t<Groups...>>>,
+    "Duplicate ExternalGroup types not allowed");
 
   // Helper to create tuple of N identical types (forward declaration for Builder)
   template<typename T, typename> struct repeat_type;
@@ -904,6 +1214,22 @@ template<typename... Groups> class GroupEventLoop
 public:
   using self_type = GroupEventLoop<Groups...>;
   static constexpr std::size_t group_count = sizeof...(Groups);
+
+  // External events support
+  static constexpr bool has_external_group = detail::has_external_group_v<Groups...>;
+  static constexpr std::size_t external_group_count = detail::count_external_groups_v<Groups...>;
+  using external_groups_t = detail::collect_external_groups_t<Groups...>;
+
+  // Legacy: first external group's events (for backwards compatibility with single ExternalGroup)
+  using external_events_t = detail::find_external_group_events_t<Groups...>;
+  using external_inbox_t =
+    std::conditional_t<has_external_group, detail::make_external_inbox_t<external_events_t>, void>;
+  using external_emitter_t =
+    std::conditional_t<has_external_group, detail::make_external_emitter_t<external_events_t>, void>;
+
+  // Multi-ExternalGroup: tuple of shared_ptr<ExternalInbox<...>> for each ExternalGroup
+  using external_inboxes_tuple_t =
+    std::conditional_t<has_external_group, detail::make_external_inboxes_tuple_t<external_groups_t>, std::tuple<>>;
 
   // ==========================================================================
   // Setup - constexpr builder that stores primed events in a tuple
@@ -1062,6 +1388,60 @@ public:
     return poll_group_impl<GroupIndex>(std::make_index_sequence<group_count>{});
   }
 
+  // ==========================================================================
+  // External event support
+  // ==========================================================================
+
+  // Get external emitter by type T (looks up ExternalGroup<T> in Groups)
+  // Usage: auto emitter = loop->get_external_emitter<NetworkInputs>();
+  template<typename T>
+  [[nodiscard]] auto get_external_emitter()
+    requires(has_external_group && !detail::is_external_group_v<T>)
+  {
+    using group_type = ExternalGroup<T>;
+    constexpr std::size_t ext_idx = detail::find_external_group_index_v<group_type, Groups...>;
+    static_assert(ext_idx != static_cast<std::size_t>(-1), "ExternalGroup<T> not found in Groups");
+    using emitter_type = detail::external_group_to_emitter_t<group_type>;
+    return emitter_type{ std::get<ext_idx>(external_inboxes_) };
+  }
+
+  // Get external emitter (for single ExternalGroup - returns first ExternalGroup's emitter)
+  // Usage: auto emitter = loop->get_external_emitter();
+  [[nodiscard]] auto get_external_emitter()
+    requires(has_external_group && external_group_count == 1)
+  {
+    return external_emitter_t{ std::get<0>(external_inboxes_) };
+  }
+
+  // Poll specific ExternalGroup by type T
+  // Usage: loop->poll_external<NetworkInputs>();
+  template<typename T>
+  bool poll_external()
+    requires(has_external_group && !detail::is_external_group_v<T>)
+  {
+    using group_type = ExternalGroup<T>;
+    constexpr std::size_t ext_idx = detail::find_external_group_index_v<group_type, Groups...>;
+    static_assert(ext_idx != static_cast<std::size_t>(-1), "ExternalGroup<T> not found in Groups");
+    using events = typename group_type::emits;
+    return poll_external_group_impl<ext_idx>(events{});
+  }
+
+  // Poll all ExternalGroups (convenience method)
+  // Usage: loop->poll_all_external();
+  bool poll_all_external()
+    requires(has_external_group)
+  {
+    return poll_all_external_impl(std::make_index_sequence<external_group_count>{});
+  }
+
+  // Poll external inbox (legacy, for single ExternalGroup)
+  // Usage: loop->poll_external();
+  bool poll_external()
+    requires(has_external_group && external_group_count == 1)
+  {
+    return poll_external_group_impl<0>(external_events_t{});
+  }
+
 private:
   // Private constructor from builder state
   GroupEventLoop(std::tuple<detail::GroupStorage<Groups>...>&& storage,
@@ -1082,6 +1462,41 @@ private:
   {
     route_internal_event<0>(std::forward<Event>(event), std::make_index_sequence<group_count>{});
   }
+
+  // Poll specific ExternalGroup's inbox - drains events and routes to internal groups
+  template<std::size_t ExtGroupIdx, typename... Events> bool poll_external_group_impl(type_list<Events...> /*unused*/)
+  {
+    // Try each event type from this external group's inbox
+    return (poll_one_external_event<ExtGroupIdx, Events>() || ...);
+  }
+
+  // Poll all ExternalGroups
+  template<std::size_t... ExtGroupIdxs> bool poll_all_external_impl(std::index_sequence<ExtGroupIdxs...> /*unused*/)
+  {
+    // Poll each ExternalGroup, return true if any had work
+    return (poll_external_group_by_index<ExtGroupIdxs>() || ...);
+  }
+
+  // Poll a specific ExternalGroup by index
+  template<std::size_t ExtGroupIdx> bool poll_external_group_by_index()
+  {
+    using ext_group = detail::external_group_at_t<ExtGroupIdx, Groups...>;
+    using events = typename ext_group::emits;
+    return poll_external_group_impl<ExtGroupIdx>(events{});
+  }
+
+  // Poll one event type from specific ExternalGroup's inbox
+  template<std::size_t ExtGroupIdx, typename Event> bool poll_one_external_event()
+  {
+    Event event;
+    if (std::get<ExtGroupIdx>(external_inboxes_)->template try_pop<Event>(event)) {
+      // Route to internal groups (treat as coming from group 0 for routing purposes)
+      route_internal_event<0>(std::move(event), std::make_index_sequence<group_count>{});
+      return true;
+    }
+    return false;
+  }
+
   // Find which group contains a receiver type
   template<typename Receiver> static consteval std::size_t find_receiver_group_index()
   {
@@ -1122,12 +1537,18 @@ private:
 
   template<std::size_t I> void start_group_thread()
   {
-    std::get<I>(threads_) = std::thread([this] { run_group<I>(); });
+    using Group = detail::type_at_t<I, Groups...>;
+    // Skip ExternalGroup - it doesn't run on a thread
+    if constexpr (!detail::is_external_group_v<Group>) {
+      std::get<I>(threads_) = std::thread([this] { run_group<I>(); });
+    }
   }
 
   template<std::size_t I> void run_group()
   {
     using Group = detail::type_at_t<I, Groups...>;
+    // Can't run ExternalGroup - it has no thread runner
+    static_assert(!detail::is_external_group_v<Group>, "Cannot run ExternalGroup on a thread");
     detail::GroupRunner<Group, I, self_type> runner(*this, std::get<I>(signals_), running_);
     runner.run();
   }
@@ -1342,6 +1763,24 @@ private:
   // Per-event-type queues: one set per group (ECS/data-oriented design)
   // Each GroupEventQueues gets the full group list for SPSC/MPSC selection
   std::tuple<detail::GroupEventQueues<Groups, Groups...>...> queues_{};
+
+  // External inboxes (tuple of shared_ptr, one per ExternalGroup)
+  // The shared_ptr keeps each inbox alive even if EventLoop is destroyed
+  // When no ExternalGroup, this is an empty tuple (zero cost)
+
+  // Helper to create tuple of shared_ptrs for external inboxes
+  template<typename... ExtGroups> static auto make_external_inboxes(type_list<ExtGroups...> /*unused*/)
+  {
+    return std::make_tuple(std::make_shared<typename detail::external_group_to_inbox_ptr<ExtGroups>::inbox_type>()...);
+  }
+
+  external_inboxes_tuple_t external_inboxes_ = []() {
+    if constexpr (has_external_group) {
+      return make_external_inboxes(external_groups_t{});
+    } else {
+      return std::tuple<>{};
+    }
+  }();
 };
 
 } // namespace ev_loop

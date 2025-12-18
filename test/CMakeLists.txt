@@ -81,3 +81,10 @@ target_link_libraries(test_tag_type_overflow_fail PRIVATE ev_loop::ev_loop)
 add_test(NAME tag_type_overflow_should_fail
          COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_tag_type_overflow_fail)
 set_tests_properties(tag_type_overflow_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that duplicate ExternalGroup types are rejected
+add_executable(test_duplicate_external_group_fail EXCLUDE_FROM_ALL test_duplicate_external_group_fail.cpp)
+target_link_libraries(test_duplicate_external_group_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME duplicate_external_group_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_duplicate_external_group_fail)
+set_tests_properties(duplicate_external_group_should_fail PROPERTIES WILL_FAIL TRUE)
