@@ -11,6 +11,7 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 // NOLINTEND(misc-include-cleaner)
 
 namespace {
@@ -277,6 +278,203 @@ TEST_CASE("GroupStorage access by index", "[group_event_loop]")
 }
 
 // =============================================================================
+// SpscInbox tests
+// =============================================================================
+
+TEST_CASE("SpscInbox push and pop", "[inbox]")
+{
+  ev_loop::detail::SpscInbox<int> inbox;
+  REQUIRE(inbox.empty());
+
+  REQUIRE(inbox.push(kTestValue1));
+  REQUIRE(inbox.push(kTestValue2));
+  REQUIRE_FALSE(inbox.empty());
+  REQUIRE(inbox.size() == 2);
+
+  int value = 0;
+  REQUIRE(inbox.try_pop(value));
+  REQUIRE(value == kTestValue1);
+  REQUIRE(inbox.try_pop(value));
+  REQUIRE(value == kTestValue2);
+  REQUIRE(inbox.empty());
+  REQUIRE_FALSE(inbox.try_pop(value));
+}
+
+TEST_CASE("SpscInbox drain", "[inbox]")
+{
+  ev_loop::detail::SpscInbox<int> inbox;
+  inbox.push(1);
+  inbox.push(2);
+  inbox.push(3);
+
+  int sum = 0;
+  const auto count = inbox.drain([&sum](int val) { sum += val; });
+  REQUIRE(count == 3);
+  REQUIRE(sum == 6);
+  REQUIRE(inbox.empty());
+}
+
+// =============================================================================
+// MpscInbox tests
+// =============================================================================
+
+TEST_CASE("MpscInbox push and pop", "[inbox]")
+{
+  ev_loop::detail::MpscInbox<int> inbox;
+  REQUIRE(inbox.empty());
+
+  REQUIRE(inbox.push(kTestValue1));
+  REQUIRE(inbox.push(kTestValue2));
+  REQUIRE_FALSE(inbox.empty());
+
+  int value = 0;
+  REQUIRE(inbox.try_pop(value));
+  REQUIRE(value == kTestValue1);
+  REQUIRE(inbox.try_pop(value));
+  REQUIRE(value == kTestValue2);
+  REQUIRE(inbox.empty());
+  REQUIRE_FALSE(inbox.try_pop(value));
+}
+
+TEST_CASE("MpscInbox concurrent producers", "[inbox]")
+{
+  constexpr int kItemsPerThread = 1000;
+  constexpr int kNumThreads = 4;
+
+  ev_loop::detail::MpscInbox<int, 8192> inbox;
+  std::atomic<int> items_pushed{ 0 };
+
+  // Launch multiple producer threads
+  std::vector<std::thread> producers;
+  producers.reserve(kNumThreads);
+  for (int thread_id = 0; thread_id < kNumThreads; ++thread_id) {
+    producers.emplace_back([&inbox, &items_pushed, thread_id] {
+      for (int idx = 0; idx < kItemsPerThread; ++idx) {
+        while (!inbox.push((thread_id * kItemsPerThread) + idx)) { std::this_thread::yield(); }
+        items_pushed.fetch_add(1, std::memory_order_relaxed);
+      }
+    });
+  }
+
+  // Consumer on main thread
+  int items_popped = 0;
+  const int total_items = kNumThreads * kItemsPerThread;
+
+  while (items_popped < total_items) {
+    int value = 0;
+    if (inbox.try_pop(value)) {
+      ++items_popped;
+    } else {
+      std::this_thread::yield();
+    }
+  }
+
+  for (auto& thread : producers) { thread.join(); }
+
+  REQUIRE(items_popped == total_items);
+  REQUIRE(inbox.empty());
+}
+
+TEST_CASE("MpscInbox drain", "[inbox]")
+{
+  ev_loop::detail::MpscInbox<int> inbox;
+  inbox.push(1);
+  inbox.push(2);
+  inbox.push(3);
+
+  int sum = 0;
+  const auto count = inbox.drain([&sum](int val) { sum += val; });
+  REQUIRE(count == 3);
+  REQUIRE(sum == 6);
+  REQUIRE(inbox.empty());
+}
+
+// =============================================================================
+// Queue type selection tests (compile-time SPSC vs MPSC)
+// =============================================================================
+
+namespace {
+// Test events for queue selection
+struct QueueTestEventA
+{
+};
+struct QueueTestEventB
+{
+};
+
+// Group1 receives A, emits B
+struct QueueTestGroup1Recv
+{
+  using receives = ev_loop::type_list<QueueTestEventA>;
+  using emits = ev_loop::type_list<QueueTestEventB>;
+  template<typename D> void on_event(QueueTestEventA /*unused*/, D& /*unused*/) {}
+};
+
+// Group2 receives B, emits A
+struct QueueTestGroup2Recv
+{
+  using receives = ev_loop::type_list<QueueTestEventB>;
+  using emits = ev_loop::type_list<QueueTestEventA>;
+  template<typename D> void on_event(QueueTestEventB /*unused*/, D& /*unused*/) {}
+};
+
+// Group3 receives nothing, emits B (same as Group1 - creates MPSC scenario for Group2)
+struct QueueTestGroup3Recv
+{
+  using receives = ev_loop::type_list<QueueTestEventA>;
+  using emits = ev_loop::type_list<QueueTestEventB>;
+  template<typename D> void on_event(QueueTestEventA /*unused*/, D& /*unused*/) {}
+};
+
+using QueueTestGroup1 = ev_loop::SpinGroup<QueueTestGroup1Recv>;
+using QueueTestGroup2 = ev_loop::SpinGroup<QueueTestGroup2Recv>;
+using QueueTestGroup3 = ev_loop::SpinGroup<QueueTestGroup3Recv>;
+} // namespace
+
+TEST_CASE("Queue selection - SPSC for single producer", "[inbox]")
+{
+  // 2-group ping-pong: each event has exactly 1 producer
+  // Group1 emits B (only producer of B for Group2)
+  // Group2 emits A (only producer of A for Group1)
+
+  using namespace ev_loop::detail;
+
+  // EventA to Group1: only Group2 emits A → 1 producer → SPSC
+  static_assert(count_event_producers_v<QueueTestGroup1, QueueTestEventA, QueueTestGroup1, QueueTestGroup2> == 1);
+
+  // EventB to Group2: only Group1 emits B → 1 producer → SPSC
+  static_assert(count_event_producers_v<QueueTestGroup2, QueueTestEventB, QueueTestGroup1, QueueTestGroup2> == 1);
+
+  // Verify SPSC queue is selected
+  static_assert(std::is_same_v<select_queue_t<QueueTestEventA, 1>, SpscInbox<QueueTestEventA>>);
+  static_assert(std::is_same_v<select_queue_t<QueueTestEventB, 1>, SpscInbox<QueueTestEventB>>);
+
+  REQUIRE(true); // Static asserts passed
+}
+
+TEST_CASE("Queue selection - MPSC for multiple producers", "[inbox]")
+{
+  // 3-group setup: Group1 AND Group3 both emit B to Group2
+  // Group1 emits B, Group3 also emits B → 2 producers for Group2's B queue
+
+  using namespace ev_loop::detail;
+
+  // EventB to Group2: Group1 emits B, Group3 emits B → 2 producers → MPSC
+  static_assert(
+    count_event_producers_v<QueueTestGroup2, QueueTestEventB, QueueTestGroup1, QueueTestGroup2, QueueTestGroup3> == 2);
+
+  // EventA to Group1: only Group2 emits A → 1 producer → SPSC
+  static_assert(
+    count_event_producers_v<QueueTestGroup1, QueueTestEventA, QueueTestGroup1, QueueTestGroup2, QueueTestGroup3> == 1);
+
+  // Verify MPSC queue is selected for 2+ producers
+  static_assert(std::is_same_v<select_queue_t<QueueTestEventB, 2>, MpscInbox<QueueTestEventB>>);
+  static_assert(std::is_same_v<select_queue_t<QueueTestEventB, 3>, MpscInbox<QueueTestEventB>>);
+
+  REQUIRE(true); // Static asserts passed
+}
+
+// =============================================================================
 // GroupWorkSignal tests
 // =============================================================================
 
@@ -299,7 +497,8 @@ TEST_CASE("GroupWorkSignal stop wakes waiters", "[group_event_loop]")
   std::atomic<bool> woke_up{ false };
 
   std::thread waiter([&] {
-    (void)signal.wait_for_work();
+    const auto sig = signal.get_signal();
+    (void)signal.wait_for_work(sig);
     woke_up.store(true);
   });
 

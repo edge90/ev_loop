@@ -199,69 +199,24 @@ namespace detail {
   inline constexpr std::size_t cache_line_size = 64;
 
   // =============================================================================
-  // Inbox: atomic ring buffer for cross-thread communication
-  // Other groups and external emitters push here, owning group drains
+  // InboxBase: CRTP base for SPSC and MPSC ring buffers
+  // Provides public interface, derived classes implement the details
   // =============================================================================
 
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  template<typename T, std::size_t Capacity = 4096> class Inbox
+  template<typename Derived, typename T, std::size_t Capacity = 4096> class InboxBase
   {
     static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2");
+
+    friend Derived;
+
+    [[nodiscard]] Derived& derived() noexcept { return static_cast<Derived&>(*this); }
+    [[nodiscard]] const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
+
+  protected:
     static constexpr std::size_t mask_ = Capacity - 1;
+    static constexpr std::size_t capacity_ = Capacity;
 
-  public:
-    // Push an event (producer side, may be called from other threads)
-    bool push(T event)
-    {
-      const std::size_t head = head_.load(std::memory_order_acquire);
-      const std::size_t tail = tail_.load(std::memory_order_relaxed);
-      if (tail - head >= Capacity) [[unlikely]] { return false; }
-      buffer_[tail & mask_] = std::move(event);
-      tail_.store(tail + 1, std::memory_order_release);
-      return true;
-    }
-
-    // Try to pop a single event (consumer side)
-    bool try_pop(T& out)
-    {
-      const std::size_t tail = tail_.load(std::memory_order_acquire);
-      const std::size_t head = head_.load(std::memory_order_relaxed);
-      if (head >= tail) { return false; }
-      out = std::move(buffer_[head & mask_]);
-      head_.store(head + 1, std::memory_order_release);
-      return true;
-    }
-
-    // Drain all events, calling func for each (consumer side)
-    template<typename Func> std::size_t drain(Func&& func)
-    {
-      const std::size_t tail = tail_.load(std::memory_order_acquire);
-      std::size_t head = head_.load(std::memory_order_relaxed);
-      const std::size_t count = tail - head;
-
-      for (std::size_t i = 0; i < count; ++i) {
-        std::forward<Func>(func)(buffer_[head & mask_]);
-        ++head;
-      }
-
-      head_.store(head, std::memory_order_release);
-      return count;
-    }
-
-    // Check if empty (consumer side)
-    [[nodiscard]] bool empty() const noexcept
-    {
-      return head_.load(std::memory_order_acquire) == tail_.load(std::memory_order_acquire);
-    }
-
-    [[nodiscard]] std::size_t size() const noexcept
-    {
-      const std::size_t tail = tail_.load(std::memory_order_acquire);
-      const std::size_t head = head_.load(std::memory_order_acquire);
-      return tail - head;
-    }
-
-  private:
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4324)
@@ -272,7 +227,141 @@ namespace detail {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
+
+  public:
+    // Public interface - delegates to derived
+    bool push(T event) { return derived().push_impl(std::move(event)); }
+    bool try_pop(T& out) { return derived().try_pop_impl(out); }
+    [[nodiscard]] bool empty() const noexcept { return derived().empty_impl(); }
+
+    // size() is the same for both SPSC and MPSC
+    [[nodiscard]] std::size_t size() const noexcept
+    {
+      const std::size_t tail = tail_.load(std::memory_order_acquire);
+      const std::size_t head = head_.load(std::memory_order_acquire);
+      return tail - head;
+    }
+
+    // drain() uses public try_pop
+    template<typename Func> std::size_t drain(Func&& func)
+    {
+      std::size_t count = 0;
+      T item;
+      while (try_pop(item)) {
+        std::forward<Func>(func)(std::move(item));
+        ++count;
+      }
+      return count;
+    }
   };
+
+  // =============================================================================
+  // SpscInbox: single-producer single-consumer ring buffer
+  // =============================================================================
+
+  template<typename T, std::size_t Capacity = 4096> class SpscInbox;
+
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+  template<typename T, std::size_t Capacity> class SpscInbox : public InboxBase<SpscInbox<T, Capacity>, T, Capacity>
+  {
+    using Base = InboxBase<SpscInbox<T, Capacity>, T, Capacity>;
+    friend Base;
+
+    using Base::buffer_;
+    using Base::capacity_;
+    using Base::head_;
+    using Base::mask_;
+    using Base::tail_;
+
+    // Implementation methods (called by base)
+    bool push_impl(T event)
+    {
+      const std::size_t head = head_.load(std::memory_order_acquire);
+      const std::size_t tail = tail_.load(std::memory_order_relaxed);
+      if (tail - head >= capacity_) [[unlikely]] { return false; }
+      buffer_[tail & mask_] = std::move(event);
+      tail_.store(tail + 1, std::memory_order_release);
+      return true;
+    }
+
+    bool try_pop_impl(T& out)
+    {
+      const std::size_t tail = tail_.load(std::memory_order_acquire);
+      const std::size_t head = head_.load(std::memory_order_relaxed);
+      if (head >= tail) { return false; }
+      out = std::move(buffer_[head & mask_]);
+      head_.store(head + 1, std::memory_order_release);
+      return true;
+    }
+
+    [[nodiscard]] bool empty_impl() const noexcept
+    {
+      return head_.load(std::memory_order_acquire) >= tail_.load(std::memory_order_acquire);
+    }
+  };
+
+  // =============================================================================
+  // MpscInbox: multi-producer single-consumer ring buffer
+  // Uses per-slot ready flags to handle out-of-order producer completion
+  // =============================================================================
+
+  template<typename T, std::size_t Capacity = 4096> class MpscInbox;
+
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+  template<typename T, std::size_t Capacity> class MpscInbox : public InboxBase<MpscInbox<T, Capacity>, T, Capacity>
+  {
+    using Base = InboxBase<MpscInbox<T, Capacity>, T, Capacity>;
+    friend Base;
+
+    using Base::buffer_;
+    using Base::capacity_;
+    using Base::head_;
+    using Base::mask_;
+    using Base::tail_;
+
+    // Per-slot ready flags - set when producer finishes writing to slot
+    alignas(cache_line_size) std::array<std::atomic<bool>, Capacity> ready_{};
+
+    // Implementation methods (called by base)
+    bool push_impl(T event)
+    {
+      // Atomically claim a slot using compare-exchange
+      std::size_t tail = tail_.load(std::memory_order_relaxed);
+      std::size_t head = 0;
+
+      do {
+        head = head_.load(std::memory_order_acquire);
+        if (tail - head >= capacity_) [[unlikely]] { return false; }
+      } while (!tail_.compare_exchange_weak(tail, tail + 1, std::memory_order_relaxed, std::memory_order_relaxed));
+
+      // Successfully claimed slot 'tail' - write data and mark ready
+      buffer_[tail & mask_] = std::move(event);
+      ready_[tail & mask_].store(true, std::memory_order_release);
+      return true;
+    }
+
+    bool try_pop_impl(T& out)
+    {
+      const std::size_t head = head_.load(std::memory_order_relaxed);
+
+      // Check if the next slot is ready (producer finished writing)
+      if (!ready_[head & mask_].load(std::memory_order_acquire)) { return false; }
+
+      out = std::move(buffer_[head & mask_]);
+      ready_[head & mask_].store(false, std::memory_order_relaxed);
+      head_.store(head + 1, std::memory_order_release);
+      return true;
+    }
+
+    [[nodiscard]] bool empty_impl() const noexcept
+    {
+      const std::size_t head = head_.load(std::memory_order_relaxed);
+      return !ready_[head & mask_].load(std::memory_order_acquire);
+    }
+  };
+
+  // Legacy Inbox alias - use SpscInbox for backward compatibility
+  template<typename T, std::size_t Capacity = 4096> using Inbox = SpscInbox<T, Capacity>;
 
   // =============================================================================
   // GroupWorkSignal: notification primitive for inter-group communication
@@ -289,15 +378,17 @@ namespace detail {
       signal_.notify_one();
     }
 
-    // Consumer blocks until work is signaled or stopped
+    // Get current signal value (acquire semantics)
+    // Call BEFORE polling to avoid lost wakeup race
+    [[nodiscard]] std::size_t get_signal() const noexcept { return signal_.load(std::memory_order_acquire); }
+
+    // Consumer blocks until signal changes from expected_signal or stopped
     // Returns false if stopped, true if work might be available
-    [[nodiscard]] bool wait_for_work() noexcept
+    // IMPORTANT: Call get_signal() BEFORE polling, then pass that value here
+    [[nodiscard]] bool wait_for_work(std::size_t expected_signal) noexcept
     {
       if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return false; }
-      const auto sig = signal_.load(std::memory_order_acquire);
-      // Check stop again after loading signal (avoid lost wakeup)
-      if (stop_.load(std::memory_order_acquire)) [[unlikely]] { return false; }
-      signal_.wait(sig, std::memory_order_acquire);
+      signal_.wait(expected_signal, std::memory_order_acquire);
       return !stop_.load(std::memory_order_acquire);
     }
 
@@ -420,11 +511,16 @@ namespace detail {
     using Base = GroupRunnerBase<ThreadGroup<Strategy, Receivers...>, GroupIndex, EventLoopType>;
     using Group = ThreadGroup<Strategy, Receivers...>;
 
+    // Bring base class members into scope (avoids this-> for dependent names)
+    using Base::event_loop_;
+    using Base::is_running;
+    using Base::signal_;
+
   public:
     using Base::Base;
 
     // Single poll iteration - returns true if work was done
-    [[nodiscard]] bool poll() { return this->event_loop_.template poll_group<GroupIndex>(); }
+    [[nodiscard]] bool poll() { return event_loop_.template poll_group<GroupIndex>(); }
 
     // Run until stopped - strategy-specific behavior
     void run()
@@ -443,13 +539,14 @@ namespace detail {
     template<typename Predicate> void run_while(Predicate&& pred)
     {
       if constexpr (std::is_same_v<Strategy, Spin>) {
-        while (this->is_running() && pred()) { (void)poll(); }
+        while (is_running() && pred()) { (void)poll(); }
       } else if constexpr (std::is_same_v<Strategy, Wait>) {
-        while (this->is_running() && pred()) {
-          if (!poll()) { this->signal_.wait_for_work(); }
+        while (is_running() && pred()) {
+          const auto sig = signal_.get_signal();
+          if (!poll()) { std::ignore = signal_.wait_for_work(sig); }
         }
       } else if constexpr (std::is_same_v<Strategy, Yield>) {
-        while (this->is_running() && pred()) {
+        while (is_running() && pred()) {
           if (!poll()) { std::this_thread::yield(); }
         }
       } else if constexpr (std::is_same_v<Strategy, Hybrid>) {
@@ -460,19 +557,23 @@ namespace detail {
   private:
     void run_spin()
     {
-      while (this->is_running()) { (void)poll(); }
+      while (is_running()) { (void)poll(); }
     }
 
     void run_wait()
     {
-      while (this->is_running()) {
-        if (!poll()) { this->signal_.wait_for_work(); }
+      while (is_running()) {
+        // Load signal BEFORE polling to avoid lost wakeup race:
+        // If we poll first and find nothing, then producer pushes and signals,
+        // we'd wait for a signal that already happened.
+        const auto sig = signal_.get_signal();
+        if (!poll()) { std::ignore = signal_.wait_for_work(sig); }
       }
     }
 
     void run_yield()
     {
-      while (this->is_running()) {
+      while (is_running()) {
         if (!poll()) { std::this_thread::yield(); }
       }
     }
@@ -481,14 +582,15 @@ namespace detail {
     {
       constexpr std::size_t default_spin_count = 1000;
       std::size_t empty_spins = 0;
-      while (this->is_running()) {
+      while (is_running()) {
+        const auto sig = signal_.get_signal();
         if (poll()) {
           empty_spins = 0;
         } else {
           ++empty_spins;
           if (empty_spins >= default_spin_count) {
             empty_spins = 0;
-            this->signal_.wait_for_work();
+            std::ignore = signal_.wait_for_work(sig);
           }
         }
       }
@@ -498,14 +600,15 @@ namespace detail {
     {
       constexpr std::size_t default_spin_count = 1000;
       std::size_t empty_spins = 0;
-      while (this->is_running() && std::forward<Predicate>(pred)()) {
+      while (is_running() && std::forward<Predicate>(pred)()) {
+        const auto sig = signal_.get_signal();
         if (poll()) {
           empty_spins = 0;
         } else {
           ++empty_spins;
           if (empty_spins >= default_spin_count) {
             empty_spins = 0;
-            this->signal_.wait_for_work();
+            std::ignore = signal_.wait_for_work(sig);
           }
         }
       }
@@ -667,6 +770,35 @@ namespace detail {
   inline constexpr std::size_t count_groups_handling_event_v =
     ((group_handles_event_v<Groups, Event> ? 1 : 0) + ... + 0);
 
+  // Check if a group can emit a specific event (any receiver in the group emits it)
+  template<typename Group, typename Event> struct group_can_emit_event;
+
+  template<typename Strategy, typename... Receivers, typename Event>
+  struct group_can_emit_event<ThreadGroup<Strategy, Receivers...>, Event>
+    : std::bool_constant<(contains_v<get_emits_t<Receivers>, Event> || ...)>
+  {
+  };
+
+  template<typename Group, typename Event>
+  inline constexpr bool group_can_emit_event_v = group_can_emit_event<Group, Event>::value;
+
+  // Count how many groups (excluding DestGroup) can emit Event to DestGroup
+  // This determines whether we need SPSC (<=1 producer) or MPSC (>1 producers)
+  // For GroupEventLoop: only internal producers count (no external emit after start)
+  template<typename DestGroup, typename Event, typename... AllGroups> struct count_event_producers
+  {
+    // Count internal producers (other groups that emit this event)
+    static constexpr std::size_t value =
+      ((std::is_same_v<DestGroup, AllGroups> ? 0 : (group_can_emit_event_v<AllGroups, Event> ? 1 : 0)) + ... + 0);
+  };
+
+  template<typename DestGroup, typename Event, typename... AllGroups>
+  inline constexpr std::size_t count_event_producers_v = count_event_producers<DestGroup, Event, AllGroups...>::value;
+
+  // Select queue type based on producer count
+  template<typename Event, std::size_t ProducerCount>
+  using select_queue_t = std::conditional_t<ProducerCount <= 1, SpscInbox<Event>, MpscInbox<Event>>;
+
   // Get indices of groups that handle a specific event
   template<typename Event, typename... Groups> struct groups_handling_event_indices
   {
@@ -689,38 +821,58 @@ namespace detail {
 
   // =============================================================================
   // Per-event-type queues (ECS/data-oriented design)
+  // Automatically selects SPSC or MPSC based on producer count at compile time
   // =============================================================================
 
-  // Create tuple of Inbox<Event> for each unique event type
-  template<typename EventList> struct make_event_queues;
-  template<typename... Events> struct make_event_queues<type_list<Events...>>
+  // Create tuple of queues, selecting SPSC vs MPSC per event based on producer count
+  template<typename DestGroup, typename GroupList, typename EventList> struct make_event_queues;
+
+  template<typename DestGroup, typename... AllGroups, typename... Events>
+  struct make_event_queues<DestGroup, type_list<AllGroups...>, type_list<Events...>>
   {
-    using type = std::tuple<Inbox<Events>...>;
+    // For each event, count producers and select appropriate queue type
+    template<typename Event>
+    using queue_for = select_queue_t<Event, count_event_producers_v<DestGroup, Event, AllGroups...>>;
+
+    using type = std::tuple<queue_for<Events>...>;
   };
-  template<typename EventList> using make_event_queues_t = typename make_event_queues<EventList>::type;
+
+  template<typename DestGroup, typename GroupList, typename EventList>
+  using make_event_queues_t = typename make_event_queues<DestGroup, GroupList, EventList>::type;
 
   // GroupEventQueues: holds per-event-type queues for a group
-  template<typename Group> struct GroupEventQueues
+  // Automatically uses SPSC when only 1 producer, MPSC when multiple
+  template<typename Group, typename... AllGroups> struct GroupEventQueues
   {
     using handled_events = unique_list_t<group_all_events_t<Group>>;
-    using queues_type = make_event_queues_t<handled_events>;
+    using queues_type = make_event_queues_t<Group, type_list<AllGroups...>, handled_events>;
 
     queues_type queues_;
 
-    // Push to the queue for a specific event type (copy)
-    template<typename Event> bool push(const Event& event)
+    // Get the queue for a specific event type (type depends on producer count)
+    template<typename Event> auto& queue_for_event()
     {
-      return std::get<Inbox<Event>>(queues_).push(Event{ event });
+      using queue_type = select_queue_t<Event, count_event_producers_v<Group, Event, AllGroups...>>;
+      return std::get<queue_type>(queues_);
     }
+
+    template<typename Event> const auto& queue_for_event() const
+    {
+      using queue_type = select_queue_t<Event, count_event_producers_v<Group, Event, AllGroups...>>;
+      return std::get<queue_type>(queues_);
+    }
+
+    // Push to the queue for a specific event type (copy)
+    template<typename Event> bool push(const Event& event) { return queue_for_event<Event>().push(Event{ event }); }
 
     // Push to the queue for a specific event type (move)
     template<typename Event> bool push(Event&& event)
     {
-      return std::get<Inbox<std::decay_t<Event>>>(queues_).push(std::forward<Event>(event));
+      return queue_for_event<std::decay_t<Event>>().push(std::forward<Event>(event));
     }
 
     // Try to pop from a specific event type's queue
-    template<typename Event> bool try_pop(Event& out) { return std::get<Inbox<Event>>(queues_).try_pop(out); }
+    template<typename Event> bool try_pop(Event& out) { return queue_for_event<Event>().try_pop(out); }
 
     // Check if all queues are empty
     template<std::size_t... Is> [[nodiscard]] bool empty_impl(std::index_sequence<Is...> /*unused*/) const noexcept
@@ -1025,7 +1177,7 @@ private:
   bool poll_group_impl(std::index_sequence<> /*unused*/)
   {
     using Group = detail::type_at_t<GroupIndex, Groups...>;
-    using handled_events = typename detail::GroupEventQueues<Group>::handled_events;
+    using handled_events = typename detail::GroupEventQueues<Group, Groups...>::handled_events;
     return poll_all_event_types<GroupIndex>(handled_events{});
   }
 
@@ -1152,7 +1304,8 @@ private:
   std::atomic<bool> running_{ false };
 
   // Per-event-type queues: one set per group (ECS/data-oriented design)
-  std::tuple<detail::GroupEventQueues<Groups>...> queues_{};
+  // Each GroupEventQueues gets the full group list for SPSC/MPSC selection
+  std::tuple<detail::GroupEventQueues<Groups, Groups...>...> queues_{};
 };
 
 } // namespace ev_loop
