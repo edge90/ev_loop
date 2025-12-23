@@ -991,6 +991,40 @@ TEST_CASE("ExternalGroup - emitter handle stays valid after EventLoop destructio
   REQUIRE(emitter.emit(EventA{ .value = kTestValue2 }));
 }
 
+TEST_CASE("ExternalEmitter - default constructed emitter returns false on emit", "[group_event_loop][external]")
+{
+  const ev_loop::ExternalEmitter<EventA, EventB> emitter;
+
+  // Default constructed emitter is invalid
+  REQUIRE_FALSE(static_cast<bool>(emitter));
+
+  // emit returns false for invalid emitter
+  REQUIRE_FALSE(emitter.emit(EventA{ .value = kTestValue1 }));
+  REQUIRE_FALSE(emitter.emit(EventB{ .value = kTestValue2 }));
+}
+
+TEST_CASE("ExternalEmitter - emit returns false when queue is full", "[group_event_loop][external]")
+{
+  using Loop =
+    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalEventCounter>, ev_loop::ExternalGroup<PrimaryExternalInputs>>;
+
+  auto loop = Loop::setup().create_unique();
+  auto emitter = loop->get_external_emitter<PrimaryExternalInputs>();
+
+  // Fill the queue (default capacity is 4096)
+  constexpr int kQueueCapacity = 4096;
+  for (int i = 0; i < kQueueCapacity; ++i) { REQUIRE(emitter.emit(EventA{ .value = i })); }
+
+  // Queue is now full, emit should return false
+  REQUIRE_FALSE(emitter.emit(EventA{ .value = kQueueCapacity }));
+
+  // After draining some events, emit should work again
+  loop->poll_all_external();
+  while (loop->poll_group<0>()) {}
+
+  REQUIRE(emitter.emit(EventA{ .value = kQueueCapacity + 1 }));
+}
+
 // External input definitions for multi-ExternalGroup tests
 struct FirstExternalInputs
 {

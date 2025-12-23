@@ -88,3 +88,38 @@ target_link_libraries(test_duplicate_external_group_fail PRIVATE ev_loop::ev_loo
 add_test(NAME duplicate_external_group_should_fail
          COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_duplicate_external_group_fail)
 set_tests_properties(duplicate_external_group_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that GroupEventLoop requires at least one group
+add_executable(test_no_groups_fail EXCLUDE_FROM_ALL test_no_groups_fail.cpp)
+target_link_libraries(test_no_groups_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME no_groups_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_no_groups_fail)
+set_tests_properties(no_groups_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that GroupEventLoop requires at least one ThreadGroup
+add_executable(test_only_external_group_fail EXCLUDE_FROM_ALL test_only_external_group_fail.cpp)
+target_link_libraries(test_only_external_group_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME only_external_group_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_only_external_group_fail)
+set_tests_properties(only_external_group_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that GroupEventLoop rejects invalid group types
+add_executable(test_invalid_group_type_fail EXCLUDE_FROM_ALL test_invalid_group_type_fail.cpp)
+target_link_libraries(test_invalid_group_type_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME invalid_group_type_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_invalid_group_type_fail)
+set_tests_properties(invalid_group_type_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that get_external_emitter rejects unknown ExternalGroup types
+add_executable(test_external_group_not_found_fail EXCLUDE_FROM_ALL test_external_group_not_found_fail.cpp)
+target_link_libraries(test_external_group_not_found_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME external_group_not_found_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_external_group_not_found_fail)
+set_tests_properties(external_group_not_found_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that get<Receiver>() rejects unknown receivers
+add_executable(test_receiver_not_found_fail EXCLUDE_FROM_ALL test_receiver_not_found_fail.cpp)
+target_link_libraries(test_receiver_not_found_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME receiver_not_found_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_receiver_not_found_fail)
+set_tests_properties(receiver_not_found_should_fail PROPERTIES WILL_FAIL TRUE)
