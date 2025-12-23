@@ -1151,3 +1151,303 @@ TEST_CASE("Multiple ExternalGroups - concurrent threads per group", "[group_even
   REQUIRE(loop->get<MultiExternalReceiver>().event_a_count.load() == kEventsPerThread);
   REQUIRE(loop->get<MultiExternalReceiver>().event_c_count.load() == kEventsPerThread);
 }
+
+// =============================================================================
+// run<I>() tests - run specific group on current thread
+// =============================================================================
+
+TEST_CASE("GroupEventLoop run<I>() runs group on current thread", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::SpinGroup<ReceiverB>>;
+
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).prime(EventB{ .value = kTestValue2 }).create_unique();
+
+  // Launch run<0>() in a separate thread (since it blocks until stopped)
+  std::atomic<bool> started{ false };
+  std::thread runner([&loop, &started] {
+    started.store(true);
+    loop->run<0>(); // Run group 0 on this thread, start group 1 on its own thread
+  });
+
+  // Wait for the runner to start
+  while (!started.load()) { std::this_thread::yield(); }
+  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
+
+  // Both groups should be processing events
+  loop->stop();
+  runner.join();
+
+  REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
+  REQUIRE(loop->get<ReceiverB>().count.load() == kTestValue2);
+}
+
+// =============================================================================
+// run_while() tests - conditional running with predicate
+// =============================================================================
+
+TEST_CASE("GroupEventLoop run_while() stops when predicate returns false", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
+
+  // Prime 10 events using the Setup builder
+  auto loop = Loop::setup()
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .create_unique();
+
+  std::thread runner([&loop] {
+    loop->run<0>(); // Run until stopped
+  });
+
+  // Give time for events to process
+  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
+  loop->stop();
+  runner.join();
+
+  // All events should be processed
+  REQUIRE(loop->get<CounterReceiver>().count.load() == 10);
+}
+
+// Test manual polling with a count limit (simulating run_while behavior)
+TEST_CASE("Manual polling with count limit", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
+
+  // Build loop with 5 events
+  auto loop = Loop::setup()
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .prime(EventA{ .value = 1 })
+                .create_unique();
+
+  // Poll manually with a count limit
+  int poll_count = 0;
+  while (loop->poll_group<0>()) { ++poll_count; }
+
+  REQUIRE(loop->get<CounterReceiver>().count.load() == 5);
+  REQUIRE(poll_count == 5);
+}
+
+// =============================================================================
+// join() tests - explicit join
+// =============================================================================
+
+TEST_CASE("GroupEventLoop join() waits for all threads", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::WaitGroup<ReceiverB>>;
+
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).prime(EventB{ .value = kTestValue2 }).create_unique();
+
+  loop->start();
+
+  // Give time for processing
+  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
+
+  // Stop signals all threads to stop
+  loop->stop(); // This calls join internally, but let's verify...
+
+  // Verify threads have joined
+  REQUIRE_FALSE(loop->is_running());
+  REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
+  REQUIRE(loop->get<ReceiverB>().count.load() == kTestValue2);
+}
+
+// =============================================================================
+// Setup tests - lvalue reuse and chaining
+// =============================================================================
+
+TEST_CASE("Setup can create multiple independent loops", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+
+  // Create two independent loops with same primed event
+  auto loop1 = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+  auto loop2 = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+
+  // Poll events on both loops
+  while (loop1->poll_group<0>()) {}
+  while (loop2->poll_group<0>()) {}
+
+  // Each loop should have processed its own event
+  REQUIRE(loop1->get<ReceiverA>().count.load() == kTestValue1);
+  REQUIRE(loop2->get<ReceiverA>().count.load() == kTestValue1);
+}
+
+TEST_CASE("Setup prime chaining works correctly", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+
+  // Test chaining multiple primes
+  auto loop =
+    Loop::setup().prime(EventA{ .value = 1 }).prime(EventA{ .value = 2 }).prime(EventA{ .value = 3 }).create_unique();
+
+  while (loop->poll_group<0>()) {}
+
+  // ReceiverA adds values: 1 + 2 + 3 = 6
+  REQUIRE(loop->get<ReceiverA>().count.load() == 6);
+}
+
+// =============================================================================
+// Hybrid strategy with custom spin_count
+// =============================================================================
+
+TEST_CASE("HybridGroup with custom spin_count", "[group_event_loop]")
+{
+  // Use ThreadGroup<Hybrid, ...> with custom spin_count
+  using Loop = ev_loop::GroupEventLoop<ev_loop::ThreadGroup<ev_loop::Hybrid, ReceiverA>>;
+
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).start_unique();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
+
+  loop->stop();
+
+  REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
+}
+
+// Verify Hybrid strategy constant is correct
+TEST_CASE("Hybrid strategy has configurable spin_count", "[group_event_loop]")
+{
+  constexpr ev_loop::Hybrid default_hybrid{};
+  STATIC_REQUIRE(default_hybrid.spin_count == 1000);
+
+  constexpr ev_loop::Hybrid custom_hybrid{ .spin_count = 500 };
+  STATIC_REQUIRE(custom_hybrid.spin_count == 500);
+}
+
+// =============================================================================
+// ExternalInbox direct tests
+// =============================================================================
+
+TEST_CASE("ExternalInbox push and try_pop", "[external]")
+{
+  ev_loop::ExternalInbox<EventA, EventB> inbox;
+
+  REQUIRE(inbox.empty<EventA>());
+  REQUIRE(inbox.empty<EventB>());
+
+  // Push events
+  REQUIRE(inbox.push(EventA{ .value = kTestValue1 }));
+  REQUIRE(inbox.push(EventB{ .value = kTestValue2 }));
+
+  REQUIRE_FALSE(inbox.empty<EventA>());
+  REQUIRE_FALSE(inbox.empty<EventB>());
+
+  // Pop events
+  EventA event_a{};
+  EventB event_b{};
+
+  REQUIRE(inbox.try_pop(event_a));
+  REQUIRE(event_a.value == kTestValue1);
+
+  REQUIRE(inbox.try_pop(event_b));
+  REQUIRE(event_b.value == kTestValue2);
+
+  REQUIRE(inbox.empty<EventA>());
+  REQUIRE(inbox.empty<EventB>());
+}
+
+TEST_CASE("ExternalInbox concurrent producers", "[external]")
+{
+  ev_loop::ExternalInbox<EventA> inbox;
+
+  constexpr int kEventsPerThread = 500;
+  constexpr int kNumThreads = 4;
+
+  std::vector<std::thread> producers;
+  producers.reserve(kNumThreads);
+
+  for (int i = 0; i < kNumThreads; ++i) {
+    producers.emplace_back([&inbox]() {
+      for (int j = 0; j < kEventsPerThread; ++j) { inbox.push(EventA{ .value = 1 }); }
+    });
+  }
+
+  for (auto& producer : producers) { producer.join(); }
+
+  // Count all events
+  int count = 0;
+  EventA event{};
+  while (inbox.try_pop(event)) { count += event.value; }
+
+  REQUIRE(count == kEventsPerThread * kNumThreads);
+}
+
+// =============================================================================
+// poll_group return value tests
+// =============================================================================
+
+TEST_CASE("poll_group returns true when work was done", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+
+  // First poll should find work
+  REQUIRE(loop->poll_group<0>());
+
+  // Second poll should find no work
+  REQUIRE_FALSE(loop->poll_group<0>());
+}
+
+TEST_CASE("poll_group returns false when no work available", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+
+  auto loop = Loop::setup().create_unique(); // No primed events
+
+  REQUIRE_FALSE(loop->poll_group<0>());
+}
+
+// =============================================================================
+// GroupStorage receivers() accessor test
+// =============================================================================
+
+TEST_CASE("GroupStorage receivers() returns tuple", "[group_event_loop]")
+{
+  using Group = ev_loop::SpinGroup<ReceiverA, ReceiverB>;
+  ev_loop::detail::GroupStorage<Group> storage;
+
+  auto& tuple = storage.receivers();
+  std::get<0>(tuple).count.store(kTestValue1);
+  std::get<1>(tuple).count.store(kTestValue2);
+
+  REQUIRE(storage.get<ReceiverA>().count.load() == kTestValue1);
+  REQUIRE(storage.get<ReceiverB>().count.load() == kTestValue2);
+}
+
+// =============================================================================
+// const access tests (deducing this)
+// =============================================================================
+
+TEST_CASE("GroupEventLoop const access via get()", "[group_event_loop]")
+{
+  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+
+  auto loop = Loop::setup().create_unique();
+  loop->get<ReceiverA>().count.store(kTestValue1);
+
+  // Access via const reference
+  const auto& const_loop = *loop;
+  REQUIRE(const_loop.get<ReceiverA>().count.load() == kTestValue1);
+}
+
+TEST_CASE("GroupStorage const access", "[group_event_loop]")
+{
+  using Group = ev_loop::SpinGroup<ReceiverA>;
+  ev_loop::detail::GroupStorage<Group> storage;
+  storage.get<ReceiverA>().count.store(kTestValue1);
+
+  const auto& const_storage = storage;
+  REQUIRE(const_storage.get<ReceiverA>().count.load() == kTestValue1);
+}

@@ -123,3 +123,17 @@ target_link_libraries(test_receiver_not_found_fail PRIVATE ev_loop::ev_loop)
 add_test(NAME receiver_not_found_should_fail
          COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_receiver_not_found_fail)
 set_tests_properties(receiver_not_found_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that InboxBase requires power-of-2 capacity
+add_executable(test_inbox_capacity_fail EXCLUDE_FROM_ALL test_inbox_capacity_fail.cpp)
+target_link_libraries(test_inbox_capacity_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME inbox_capacity_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_inbox_capacity_fail)
+set_tests_properties(inbox_capacity_should_fail PROPERTIES WILL_FAIL TRUE)
+
+# Compile-failure test: verifies that ExternalGroup<T> requires T to define emits
+add_executable(test_external_group_no_emits_fail EXCLUDE_FROM_ALL test_external_group_no_emits_fail.cpp)
+target_link_libraries(test_external_group_no_emits_fail PRIVATE ev_loop::ev_loop)
+add_test(NAME external_group_no_emits_should_fail
+         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_external_group_no_emits_fail)
+set_tests_properties(external_group_no_emits_should_fail PROPERTIES WILL_FAIL TRUE)

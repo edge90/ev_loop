@@ -1695,22 +1695,33 @@ private:
   template<std::size_t GroupIndex, typename Group, typename Event, typename Storage>
   void dispatch_to_receivers_in_group(Storage& storage, Event& event)
   {
-    // Get only receivers that handle this event type (filtered at compile time)
-    using handling_receivers = detail::group_receivers_for_event_t<Group, Event>;
-    constexpr std::size_t count = detail::type_list_size_v<handling_receivers>;
+    using all_receivers = detail::group_receivers_t<Group>;
+    constexpr std::size_t total_receivers = detail::type_list_size_v<all_receivers>;
 
-    if constexpr (count == 0) {
-      // No receivers handle this event
-    } else if constexpr (count == 1) {
-      // Single receiver: move
-      using R = detail::type_list_at_t<0, handling_receivers>;
-      dispatch_to_receiver_move<GroupIndex, R, Event>(storage, std::move(event));
+    if constexpr (total_receivers == 1) {
+      // Single receiver optimization: check directly, skip filter_list_t
+      using R = detail::type_list_at_t<0, all_receivers>;
+      if constexpr (detail::contains_v<detail::get_receives_t<R>, Event>) {
+        dispatch_to_receiver_move<GroupIndex, R, Event>(storage, std::move(event));
+      }
     } else {
-      // Multiple receivers: copy to N-1, move to last
-      dispatch_to_receivers_copy_n<GroupIndex, Event>(
-        storage, event, handling_receivers{}, std::make_index_sequence<count - 1>{});
-      using LastR = detail::type_list_at_t<count - 1, handling_receivers>;
-      dispatch_to_receiver_move<GroupIndex, LastR, Event>(storage, std::move(event));
+      // Multiple receivers: filter to find handlers
+      using handling_receivers = detail::group_receivers_for_event_t<Group, Event>;
+      constexpr std::size_t count = detail::type_list_size_v<handling_receivers>;
+
+      if constexpr (count == 0) {
+        // No receivers handle this event
+      } else if constexpr (count == 1) {
+        // Single handler: move
+        using R = detail::type_list_at_t<0, handling_receivers>;
+        dispatch_to_receiver_move<GroupIndex, R, Event>(storage, std::move(event));
+      } else {
+        // Multiple handlers: copy to N-1, move to last
+        dispatch_to_receivers_copy_n<GroupIndex, Event>(
+          storage, event, handling_receivers{}, std::make_index_sequence<count - 1>{});
+        using LastR = detail::type_list_at_t<count - 1, handling_receivers>;
+        dispatch_to_receiver_move<GroupIndex, LastR, Event>(storage, std::move(event));
+      }
     }
   }
 
