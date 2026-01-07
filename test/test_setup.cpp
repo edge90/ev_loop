@@ -2,6 +2,7 @@
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <ev_loop/ev.hpp>
+#include <memory>
 #include <utility>
 // NOLINTEND(misc-include-cleaner)
 
@@ -112,6 +113,17 @@ TEST_CASE("Setup builder", "[setup]")
     // No events primed, so poll returns false immediately
     REQUIRE_FALSE(loop->poll_group<0>());
     REQUIRE(loop->get<ReceiverA>().count.load() == 0);
+  }
+
+  SECTION("create(Factory) with custom factory")
+  {
+    auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create([](auto&& token, auto&&... events) {
+      return std::make_unique<Loop>(std::forward<decltype(token)>(token), std::forward<decltype(events)>(events)...);
+    });
+
+    while (loop->poll_group<0>()) {}
+
+    REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
   }
 }
 // NOLINTEND(readability-function-cognitive-complexity)

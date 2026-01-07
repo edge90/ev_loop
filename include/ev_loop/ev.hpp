@@ -1285,19 +1285,24 @@ public:
     }
 
     // Create EventLoop on stack - returns prvalue for guaranteed copy elision
-    [[nodiscard]] auto create() const& -> GroupEventLoop
-    {
-      return std::apply(
-        [](const auto&... events) { return GroupEventLoop{ typename GroupEventLoop::ConstructToken{}, events... }; },
-        events_);
-    }
-
-    // Create EventLoop on stack (moves events - rvalue overload)
-    [[nodiscard]] auto create() && -> GroupEventLoop
+    template<typename Self> [[nodiscard]] auto create(this Self&& self) -> GroupEventLoop
     {
       return std::apply(
         [](auto&&... events) {
           return GroupEventLoop{ typename GroupEventLoop::ConstructToken{}, std::forward<decltype(events)>(events)... };
+        },
+        std::forward<Self>(self).events_);
+    }
+
+    // Create with custom factory (e.g., custom allocator)
+    // Factory signature: (ConstructToken, Events...) -> PointerType
+    template<typename Factory> [[nodiscard]] auto create(Factory&& factory) &&
+    {
+      return std::apply(
+        [&factory](auto&&... events) {
+          return std::invoke(std::forward<Factory>(factory),
+            typename GroupEventLoop::ConstructToken{},
+            std::forward<decltype(events)>(events)...);
         },
         std::move(events_));
     }
@@ -1305,23 +1310,19 @@ public:
     // Create on heap (returns unique_ptr)
     [[nodiscard]] auto create_unique() && -> std::unique_ptr<GroupEventLoop>
     {
-      return std::apply(
-        [](auto&&... events) {
-          return std::make_unique<GroupEventLoop>(
-            typename GroupEventLoop::ConstructToken{}, std::forward<decltype(events)>(events)...);
-        },
-        std::move(events_));
+      return std::move(*this).create([](auto&& token, auto&&... events) {
+        return std::make_unique<GroupEventLoop>(
+          std::forward<decltype(token)>(token), std::forward<decltype(events)>(events)...);
+      });
     }
 
     // Create on heap (returns shared_ptr)
     [[nodiscard]] auto create_shared() && -> std::shared_ptr<GroupEventLoop>
     {
-      return std::apply(
-        [](auto&&... events) {
-          return std::make_shared<GroupEventLoop>(
-            typename GroupEventLoop::ConstructToken{}, std::forward<decltype(events)>(events)...);
-        },
-        std::move(events_));
+      return std::move(*this).create([](auto&& token, auto&&... events) {
+        return std::make_shared<GroupEventLoop>(
+          std::forward<decltype(token)>(token), std::forward<decltype(events)>(events)...);
+      });
     }
   };
 
