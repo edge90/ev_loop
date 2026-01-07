@@ -1284,52 +1284,44 @@ public:
         std::move(events_), std::make_tuple(std::forward<Event>(event))) };
     }
 
-    // Create EventLoop on stack (relies on NRVO)
+    // Create EventLoop on stack - returns prvalue for guaranteed copy elision
     [[nodiscard]] auto create() const& -> GroupEventLoop
     {
-      GroupEventLoop loop{ typename GroupEventLoop::ConstructToken{} };
-      std::apply([&loop](const auto&... events) { (loop.prime_event(events), ...); }, events_);
-      return loop;
+      return std::apply(
+        [](const auto&... events) { return GroupEventLoop{ typename GroupEventLoop::ConstructToken{}, events... }; },
+        events_);
     }
 
     // Create EventLoop on stack (moves events - rvalue overload)
     [[nodiscard]] auto create() && -> GroupEventLoop
     {
-      GroupEventLoop loop{ typename GroupEventLoop::ConstructToken{} };
-      std::apply([&loop](auto&&... events) { (loop.prime_event(std::forward<decltype(events)>(events)), ...); },
+      return std::apply(
+        [](auto&&... events) {
+          return GroupEventLoop{ typename GroupEventLoop::ConstructToken{}, std::forward<decltype(events)>(events)... };
+        },
         std::move(events_));
-      return loop;
-    }
-
-    // Create with factory (e.g., std::make_unique<Loop>)
-    template<typename Factory> [[nodiscard]] auto create(Factory&& factory) const&
-    {
-      auto loop = std::invoke(std::forward<Factory>(factory));
-      std::apply([&loop](const auto&... events) { (loop->prime_event(events), ...); }, events_);
-      return loop;
-    }
-
-    // Create with factory (moves events - rvalue overload)
-    template<typename Factory> [[nodiscard]] auto create(Factory&& factory) &&
-    {
-      auto loop = std::invoke(std::forward<Factory>(factory));
-      std::apply([&loop](auto&&... events) { (loop->prime_event(std::forward<decltype(events)>(events)), ...); },
-        std::move(events_));
-      return loop;
     }
 
     // Create on heap (returns unique_ptr)
     [[nodiscard]] auto create_unique() && -> std::unique_ptr<GroupEventLoop>
     {
-      return std::move(*this).create(
-        [] { return std::make_unique<GroupEventLoop>(typename GroupEventLoop::ConstructToken{}); });
+      return std::apply(
+        [](auto&&... events) {
+          return std::make_unique<GroupEventLoop>(
+            typename GroupEventLoop::ConstructToken{}, std::forward<decltype(events)>(events)...);
+        },
+        std::move(events_));
     }
 
     // Create on heap (returns shared_ptr)
     [[nodiscard]] auto create_shared() && -> std::shared_ptr<GroupEventLoop>
     {
-      return std::move(*this).create(
-        [] { return std::make_shared<GroupEventLoop>(typename GroupEventLoop::ConstructToken{}); });
+      return std::apply(
+        [](auto&&... events) {
+          return std::make_shared<GroupEventLoop>(
+            typename GroupEventLoop::ConstructToken{}, std::forward<decltype(events)>(events)...);
+        },
+        std::move(events_));
     }
   };
 
@@ -1359,6 +1351,12 @@ private:
 public:
   // Public constructor guarded by private token - enables std::make_unique/make_shared
   explicit GroupEventLoop(ConstructToken /*unused*/) {}
+
+  // Constructor that primes events - enables guaranteed copy elision from Setup::create()
+  template<typename... Events> explicit GroupEventLoop(ConstructToken /*unused*/, Events&&... events)
+  {
+    (prime_event(std::forward<Events>(events)), ...);
+  }
 
   // Start all groups on their own threads (returns immediately)
   void start() { start_threads(); }
