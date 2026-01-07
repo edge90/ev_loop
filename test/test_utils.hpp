@@ -69,6 +69,7 @@ template<typename T> struct Tracked
 
   Tracked() = default;
 
+  // GCOVR_EXCL_START - Defensive null checks for default-constructed objects
   explicit Tracked(std::shared_ptr<TrackingCounter> cnt) : counter(std::move(cnt))
   {
     if (counter) { counter->constructed_count.fetch_add(1, std::memory_order_relaxed); }
@@ -126,6 +127,7 @@ template<typename T> struct Tracked
   {
     if (counter) { counter->destructed_count.fetch_add(1, std::memory_order_relaxed); }
   }
+  // GCOVR_EXCL_STOP
 
   bool operator==(const Tracked& other) const { return value == other.value; }
 };

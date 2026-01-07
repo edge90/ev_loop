@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <thread>
 #include <tuple>
@@ -11,8 +12,10 @@
 
 // MSVC doesn't support [[assume]] yet, use __assume instead
 #ifdef _MSC_VER
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define EV_ASSUME(expr) __assume(expr)
 #else
+// NOLINTNEXTLINE(cppcoreguidelines-macro-usage)
 #define EV_ASSUME(expr) [[assume(expr)]]
 #endif
 
@@ -55,6 +58,7 @@ template<typename Strategy, typename... Receivers> struct ThreadGroup
 {
   using strategy = Strategy;
   using receivers = type_list<Receivers...>;
+  // cppcheck-suppress unusedStructMember
   static constexpr std::size_t receiver_count = sizeof...(Receivers);
 };
 
@@ -265,6 +269,7 @@ namespace detail {
   public:
     // Public interface - delegates to derived
     bool push(T event) { return derived().push_impl(std::move(event)); }
+    // cppcheck-suppress accessMoved ; false positive, out is assigned not read
     bool try_pop(T& out) { return derived().try_pop_impl(out); }
     [[nodiscard]] bool empty() const noexcept { return derived().empty_impl(); }
 
@@ -281,6 +286,7 @@ namespace detail {
     {
       std::size_t count = 0;
       T item;
+      // cppcheck-suppress accessMoved ; item is reassigned by try_pop each iteration
       while (try_pop(item)) {
         std::forward<Func>(func)(std::move(item));
         ++count;
@@ -293,7 +299,9 @@ namespace detail {
   // SpscInbox: single-producer single-consumer ring buffer
   // =============================================================================
 
-  template<typename T, std::size_t Capacity = 4096> class SpscInbox;
+  inline constexpr std::size_t kDefaultInboxCapacity = 4096;
+
+  template<typename T, std::size_t Capacity = kDefaultInboxCapacity> class SpscInbox;
 
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
   template<typename T, std::size_t Capacity> class SpscInbox : public InboxBase<SpscInbox<T, Capacity>, T, Capacity>
@@ -339,7 +347,7 @@ namespace detail {
   // Uses per-slot ready flags to handle out-of-order producer completion
   // =============================================================================
 
-  template<typename T, std::size_t Capacity = 4096> class MpscInbox;
+  template<typename T, std::size_t Capacity = kDefaultInboxCapacity> class MpscInbox;
 
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
   template<typename T, std::size_t Capacity> class MpscInbox : public InboxBase<MpscInbox<T, Capacity>, T, Capacity>
@@ -361,10 +369,10 @@ namespace detail {
     {
       // Atomically claim a slot using compare-exchange
       std::size_t tail = tail_.load(std::memory_order_relaxed);
-      std::size_t head = 0;
 
+      // NOLINTNEXTLINE(cppcoreguidelines-avoid-do-while)
       do {
-        head = head_.load(std::memory_order_acquire);
+        const std::size_t head = head_.load(std::memory_order_acquire);
         if (tail - head >= capacity_) [[unlikely]] { return false; }
       } while (!tail_.compare_exchange_weak(tail, tail + 1, std::memory_order_relaxed, std::memory_order_relaxed));
 
@@ -395,7 +403,7 @@ namespace detail {
   };
 
   // Legacy Inbox alias - use SpscInbox for backward compatibility
-  template<typename T, std::size_t Capacity = 4096> using Inbox = SpscInbox<T, Capacity>;
+  template<typename T, std::size_t Capacity = kDefaultInboxCapacity> using Inbox = SpscInbox<T, Capacity>;
 
   // Type trait to detect ExternalGroup (template specialization)
   template<typename T> struct is_external_group : std::false_type
@@ -518,18 +526,21 @@ namespace detail {
   template<> struct find_external_group<>
   {
     using type = type_list<>;
+    // cppcheck-suppress unusedStructMember
     static constexpr bool found = false;
   };
   // Specialization for ExternalGroup - found it
   template<typename U, typename... Rest> struct find_external_group<ExternalGroup<U>, Rest...>
   {
     using type = typename ExternalGroup<U>::emits;
+    // cppcheck-suppress unusedStructMember
     static constexpr bool found = true;
   };
   // Specialization for non-ExternalGroup - keep searching
   template<typename First, typename... Rest> struct find_external_group<First, Rest...>
   {
     using type = typename find_external_group<Rest...>::type;
+    // cppcheck-suppress unusedStructMember
     static constexpr bool found = find_external_group<Rest...>::found;
   };
   template<typename... Ts> using find_external_group_events_t = typename find_external_group<Ts...>::type;
@@ -539,10 +550,12 @@ namespace detail {
   template<typename... Ts> struct count_external_groups;
   template<> struct count_external_groups<>
   {
+    // cppcheck-suppress unusedStructMember
     static constexpr std::size_t value = 0;
   };
   template<typename First, typename... Rest> struct count_external_groups<First, Rest...>
   {
+    // cppcheck-suppress unusedStructMember
     static constexpr std::size_t value = (is_external_group_v<First> ? 1 : 0) + count_external_groups<Rest...>::value;
   };
   template<typename... Ts> inline constexpr std::size_t count_external_groups_v = count_external_groups<Ts...>::value;
@@ -564,7 +577,8 @@ namespace detail {
   template<std::size_t N, typename... Ts> struct external_group_at;
   template<std::size_t N> struct external_group_at<N>
   {
-    static_assert(N != N, "ExternalGroup index out of bounds");
+    // Fallback when index exceeds number of ExternalGroups in pack
+    static_assert(std::is_void_v<std::integral_constant<std::size_t, N>>, "ExternalGroup index out of bounds");
   };
   template<typename U, typename... Rest> struct external_group_at<0, ExternalGroup<U>, Rest...>
   {
@@ -585,6 +599,7 @@ namespace detail {
   template<typename GroupType, std::size_t Idx, typename... Ts> struct find_external_group_index_impl;
   template<typename GroupType, std::size_t Idx> struct find_external_group_index_impl<GroupType, Idx>
   {
+    // cppcheck-suppress unusedStructMember
     static constexpr std::size_t value = static_cast<std::size_t>(-1); // Not found
   };
   template<typename GroupType, std::size_t Idx, typename First, typename... Rest>
@@ -593,6 +608,7 @@ namespace detail {
     static constexpr bool is_match = std::is_same_v<GroupType, First>;
     static constexpr bool is_ext = is_external_group_v<First>;
     static constexpr std::size_t next_idx = is_ext ? Idx + 1 : Idx;
+    // cppcheck-suppress unusedStructMember
     static constexpr std::size_t value =
       is_match ? Idx : find_external_group_index_impl<GroupType, next_idx, Rest...>::value;
   };
@@ -747,6 +763,7 @@ namespace detail {
     }
 
     // Get the underlying tuple
+    // cppcheck-suppress functionStatic
     template<typename Self> [[nodiscard]] auto& receivers(this Self& self) noexcept { return self.receivers_; }
 
   private:
@@ -758,6 +775,7 @@ namespace detail {
   {
   public:
     using group_type = ExternalGroup<T>;
+    // cppcheck-suppress unusedStructMember
     static constexpr std::size_t receiver_count = 0;
     GroupStorage() = default;
   };
@@ -769,44 +787,29 @@ namespace detail {
   // Forward declaration - will be specialized for each strategy
   template<typename Group, std::size_t GroupIndex, typename EventLoopType> class GroupRunner;
 
-  // Base functionality shared by all group runners
-  template<typename Group, std::size_t GroupIndex, typename EventLoopType> class GroupRunnerBase
+  // Strategy runner: runs with strategy-specific behavior
+  template<typename Strategy, typename... Receivers, std::size_t GroupIndex, typename EventLoopType>
+  class GroupRunner<ThreadGroup<Strategy, Receivers...>, GroupIndex, EventLoopType>
   {
-  protected:
+    using Group = ThreadGroup<Strategy, Receivers...>;
     using storage_type = GroupStorage<Group>;
-    using strategy_type = typename Group::strategy;
+    using strategy_type = Strategy;
     static constexpr std::size_t group_index = GroupIndex;
 
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-const-or-ref-data-members)
+    // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
     EventLoopType& event_loop_;
     GroupWorkSignal& signal_;
     std::atomic<bool>& running_;
+    // NOLINTEND(cppcoreguidelines-avoid-const-or-ref-data-members)
 
   public:
-    GroupRunnerBase(EventLoopType& loop, GroupWorkSignal& sig, std::atomic<bool>& running) noexcept
+    GroupRunner(EventLoopType& loop, GroupWorkSignal& sig, std::atomic<bool>& running) noexcept
       : event_loop_(loop), signal_(sig), running_(running)
     {}
 
     [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
 
     void stop() noexcept { signal_.stop(); }
-  };
-
-  // Strategy runner: runs with strategy-specific behavior
-  template<typename Strategy, typename... Receivers, std::size_t GroupIndex, typename EventLoopType>
-  class GroupRunner<ThreadGroup<Strategy, Receivers...>, GroupIndex, EventLoopType>
-    : public GroupRunnerBase<ThreadGroup<Strategy, Receivers...>, GroupIndex, EventLoopType>
-  {
-    using Base = GroupRunnerBase<ThreadGroup<Strategy, Receivers...>, GroupIndex, EventLoopType>;
-    using Group = ThreadGroup<Strategy, Receivers...>;
-
-    // Bring base class members into scope (avoids this-> for dependent names)
-    using Base::event_loop_;
-    using Base::is_running;
-    using Base::signal_;
-
-  public:
-    using Base::Base;
 
     // Single poll iteration - returns true if work was done
     [[nodiscard]] bool poll() { return event_loop_.template poll_group<GroupIndex>(); }
@@ -1081,6 +1084,7 @@ namespace detail {
   {
     // Count internal producers (other groups that emit this event)
     static constexpr std::size_t value =
+      // NOLINTNEXTLINE(readability-avoid-nested-conditional-operator)
       ((std::is_same_v<DestGroup, AllGroups> ? 0 : (group_can_emit_event_v<AllGroups, Event> ? 1 : 0)) + ... + 0);
   };
 
@@ -1185,6 +1189,7 @@ namespace detail {
 
     queues_type queues_;
 
+    // cppcheck-suppress functionStatic
     [[nodiscard]] bool empty() const noexcept { return true; }
   };
 
@@ -1407,6 +1412,7 @@ public:
   {
     using group_type = ExternalGroup<T>;
     constexpr std::size_t ext_idx = detail::find_external_group_index_v<group_type, Groups...>;
+    // NOLINTNEXTLINE(modernize-use-integer-sign-comparison)
     static_assert(ext_idx != static_cast<std::size_t>(-1), "ExternalGroup<T> not found in Groups");
     using emitter_type = detail::external_group_to_emitter_t<group_type>;
     return emitter_type{ std::get<ext_idx>(external_inboxes_) };
@@ -1422,12 +1428,14 @@ public:
 
   // Poll specific ExternalGroup by type T
   // Usage: loop->poll_external<NetworkInputs>();
+  // cppcheck-suppress functionStatic
   template<typename T>
   bool poll_external()
     requires(has_external_group && !detail::is_external_group_v<T>)
   {
     using group_type = ExternalGroup<T>;
     constexpr std::size_t ext_idx = detail::find_external_group_index_v<group_type, Groups...>;
+    // NOLINTNEXTLINE(modernize-use-integer-sign-comparison)
     static_assert(ext_idx != static_cast<std::size_t>(-1), "ExternalGroup<T> not found in Groups");
     using events = typename group_type::emits;
     return poll_external_group_impl<ext_idx>(events{});
@@ -1443,6 +1451,7 @@ public:
 
   // Poll external inbox (legacy, for single ExternalGroup)
   // Usage: loop->poll_external();
+  // cppcheck-suppress functionStatic
   bool poll_external()
     requires(has_external_group && external_group_count == 1)
   {
@@ -1596,7 +1605,7 @@ private:
 
   // Route to multiple groups with compile-time counter for copy vs move decision
   template<std::size_t SourceGroup, typename Event, std::size_t Seen, std::size_t Total>
-  void route_to_multiple_groups(Event&& /*event*/, std::index_sequence<> /*unused*/)
+  static void route_to_multiple_groups(Event&& /*event*/, std::index_sequence<> /*unused*/)
   {
     // Base case: no more groups to check
   }
