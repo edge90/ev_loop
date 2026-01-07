@@ -4,104 +4,83 @@
 [![codecov](https://codecov.io/gh/edge90/ev_loop/branch/main/graph/badge.svg)](https://codecov.io/gh/edge90/ev_loop)
 [![CodeQL](https://github.com/edge90/ev_loop/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/edge90/ev_loop/actions/workflows/codeql-analysis.yml)
 
-A high-performance, header-only C++23 event loop library with compile-time event routing and flexible threading models.
+A high-performance, header-only C++23 event loop library with compile-time event routing and flexible threading strategies.
 
 ## Features
 
 - **Header-only**: Single header `<ev_loop/ev.hpp>`
-- **Compile-time event routing**: Zero runtime dispatch overhead for event type resolution
-- **Flexible threading**: Receivers can run on the event loop thread (`SameThread`) or their own thread (`OwnThread`)
-- **Type-safe**: Events and receivers are validated at compile time
-- **Lock-free queues**: SPSC queues for high-throughput inter-thread communication
-- **Multiple polling strategies**: Spin, Yield, Wait, and Hybrid strategies
-- **Fan-out support**: Single event can be delivered to multiple receivers
-- **External event injection**: Thread-safe `ExternalEmitter` for injecting events from outside the loop
+- **Compile-time event routing**: Zero runtime dispatch overhead
+- **Group-based architecture**: Organize receivers into thread groups with different strategies
+- **Type-safe**: Events and receivers validated at compile time
+- **Lock-free queues**: SPSC/MPSC queues auto-selected based on producer count
+- **Multiple strategies**: Spin, Yield, Wait, and Hybrid polling strategies
+- **External event injection**: Thread-safe event injection from outside the loop
 
 ## Quick Start
 
 ```cpp
 #include <ev_loop/ev.hpp>
 
-// Define events as simple structs
-struct PingEvent { int value; };
-struct PongEvent { int value; };
+// Define events
+struct Ping { int value; };
+struct Pong { int value; };
 
-// Define receivers with type declarations
+// Define receivers
 struct PingReceiver {
-  using receives = ev_loop::type_list<PongEvent>;
-  using emits = ev_loop::type_list<PingEvent>;
-  using thread_mode = ev_loop::SameThread;
+  using receives = ev_loop::type_list<Pong>;
+  using emits = ev_loop::type_list<Ping>;
 
   template<typename Dispatcher>
-  void on_event(PongEvent event, Dispatcher& dispatcher) {
-    if (event.value < 10) {
-      dispatcher.emit(PingEvent{ event.value + 1 });
-    }
+  void on_event(Pong event, Dispatcher& d) {
+    if (event.value < 10) d.emit(Ping{ event.value + 1 });
   }
 };
 
 struct PongReceiver {
-  using receives = ev_loop::type_list<PingEvent>;
-  using emits = ev_loop::type_list<PongEvent>;
-  using thread_mode = ev_loop::SameThread;
+  using receives = ev_loop::type_list<Ping>;
+  using emits = ev_loop::type_list<Pong>;
 
   template<typename Dispatcher>
-  void on_event(PingEvent event, Dispatcher& dispatcher) {
-    dispatcher.emit(PongEvent{ event.value + 1 });
+  void on_event(Ping event, Dispatcher& d) {
+    d.emit(Pong{ event.value + 1 });
   }
 };
 
 int main() {
-  ev_loop::EventLoop<PingReceiver, PongReceiver> loop;
+  using Loop = ev_loop::GroupEventLoop<
+    ev_loop::SpinGroup<PingReceiver, PongReceiver>
+  >;
+
+  auto loop = Loop::setup()
+    .prime(Ping{ 0 })  // Queue initial event before starting
+    .create();
+
   loop.start();
-
-  loop.emit(PingEvent{ 0 });
-
-  // Process events until queue is empty
-  while (ev_loop::Spin{ loop }.poll()) {}
-
+  // ... events are processed on background thread ...
   loop.stop();
 }
 ```
 
-## Threading Models
+## Thread Groups
 
-### SameThread
-Receivers run on the event loop thread. Events are dispatched through a central queue, preventing stack recursion.
-
-### OwnThread
-Receivers run on their own dedicated thread with a private SPSC queue for high-throughput scenarios.
+Receivers are organized into groups, each running on its own thread with a polling strategy:
 
 ```cpp
-struct BackgroundProcessor {
-  using receives = ev_loop::type_list<DataEvent>;
-  using thread_mode = ev_loop::OwnThread;
-
-  template<typename Dispatcher>
-  void on_event(DataEvent event, Dispatcher& dispatcher) {
-    // Runs on dedicated thread
-  }
-};
+using Loop = ev_loop::GroupEventLoop<
+  ev_loop::SpinGroup<FastReceiver>,      // Busy-wait (lowest latency)
+  ev_loop::WaitGroup<SlowReceiver>,      // Block until events (lowest CPU)
+  ev_loop::YieldGroup<MediumReceiver>,   // Yield between polls
+  ev_loop::HybridGroup<BalancedReceiver> // Spin N times, then wait
+>;
 ```
 
-## Polling Strategies
-
-| Strategy | Description |
-|----------|-------------|
-| `Spin`   | Busy-wait with CPU pause hints |
-| `Yield`  | Yields to scheduler between polls |
-| `Wait`   | Blocks until events arrive (uses condition variable) |
-| `Hybrid` | Spins for N iterations, then falls back to Wait |
+### Custom Hybrid Spin Count
 
 ```cpp
-// Spin strategy (lowest latency)
-ev_loop::Spin{ loop }.run();
-
-// Wait strategy (lowest CPU usage)
-ev_loop::Wait{ loop }.run();
-
-// Hybrid strategy (balanced)
-ev_loop::Hybrid{ loop, 1000 }.run();  // spin 1000 times before waiting
+using FastHybrid = ev_loop::HybridWith<5000>;  // Spin 5000 times before waiting
+using Loop = ev_loop::GroupEventLoop<
+  ev_loop::ThreadGroup<FastHybrid, MyReceiver>
+>;
 ```
 
 ## External Event Injection
@@ -109,11 +88,35 @@ ev_loop::Hybrid{ loop, 1000 }.run();  // spin 1000 times before waiting
 Inject events from threads outside the event loop:
 
 ```cpp
-auto emitter = loop.get_external_emitter();
+struct NetworkInputs {
+  using emits = ev_loop::type_list<Ping, Pong>;
+};
 
-std::thread producer([&emitter] {
-  emitter.emit(MyEvent{ 42 });
-});
+using Loop = ev_loop::GroupEventLoop<
+  ev_loop::SpinGroup<MyReceiver>,
+  ev_loop::ExternalGroup<NetworkInputs>
+>;
+
+auto loop = Loop::setup().create();
+auto emitter = loop.get_external_emitter<NetworkInputs>();
+loop.start();
+
+// From any thread:
+emitter.emit(Ping{ 42 });
+
+// Poll external events (typically in your main loop):
+loop.poll_external<NetworkInputs>();
+```
+
+## Manual Polling
+
+Run a group on the current thread instead of spawning a background thread:
+
+```cpp
+auto loop = Loop::setup().prime(Ping{ 0 }).create();
+
+// Run group 0 on current thread, start others on background threads
+loop.run<0>();  // Blocks until stop() is called
 ```
 
 ## Requirements
