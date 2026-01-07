@@ -44,11 +44,17 @@ struct Wait
 struct Yield
 {
 };
-struct Hybrid
+// Default spin count for Hybrid strategy before transitioning to wait mode
+inline constexpr std::size_t kDefaultHybridSpinCount = 1000;
+
+// Hybrid strategy with configurable spin count (template parameter)
+template<std::size_t SpinCount = kDefaultHybridSpinCount> struct HybridWith
 {
-  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
-  std::size_t spin_count = 1000;
+  static constexpr std::size_t spin_count = SpinCount;
 };
+
+// Default Hybrid with standard spin count
+using Hybrid = HybridWith<>;
 
 // =============================================================================
 // ThreadGroup - groups receivers that share a thread with a strategy
@@ -161,6 +167,17 @@ namespace detail {
   };
 
   template<typename Group> using group_strategy_t = typename group_strategy<Group>::type;
+
+  // Detect if a type is HybridWith<N> for any N
+  template<typename T> struct is_hybrid_strategy : std::false_type
+  {
+  };
+
+  template<std::size_t N> struct is_hybrid_strategy<HybridWith<N>> : std::true_type
+  {
+  };
+
+  template<typename T> inline constexpr bool is_hybrid_strategy_v = is_hybrid_strategy<T>::value;
 
   // =============================================================================
   // Concepts for receiver/emitter detection
@@ -823,7 +840,7 @@ namespace detail {
         run_wait();
       } else if constexpr (std::is_same_v<Strategy, Yield>) {
         run_yield();
-      } else if constexpr (std::is_same_v<Strategy, Hybrid>) {
+      } else if constexpr (is_hybrid_strategy_v<Strategy>) {
         run_hybrid();
       }
     }
@@ -841,7 +858,7 @@ namespace detail {
         while (is_running() && pred()) {
           if (!poll()) { std::this_thread::yield(); }
         }
-      } else if constexpr (std::is_same_v<Strategy, Hybrid>) {
+      } else if constexpr (is_hybrid_strategy_v<Strategy>) {
         run_hybrid_while(std::forward<Predicate>(pred));
       }
     }
@@ -872,7 +889,7 @@ namespace detail {
 
     void run_hybrid()
     {
-      constexpr std::size_t default_spin_count = 1000;
+      constexpr std::size_t spin_limit = strategy_type::spin_count;
       std::size_t empty_spins = 0;
       while (is_running()) {
         const auto sig = signal_.get_signal();
@@ -880,7 +897,7 @@ namespace detail {
           empty_spins = 0;
         } else {
           ++empty_spins;
-          if (empty_spins >= default_spin_count) {
+          if (empty_spins >= spin_limit) {
             empty_spins = 0;
             std::ignore = signal_.wait_for_work(sig);
           }
@@ -890,7 +907,7 @@ namespace detail {
 
     template<typename Predicate> void run_hybrid_while(Predicate&& pred)
     {
-      constexpr std::size_t default_spin_count = 1000;
+      constexpr std::size_t spin_limit = strategy_type::spin_count;
       std::size_t empty_spins = 0;
       while (is_running() && std::forward<Predicate>(pred)()) {
         const auto sig = signal_.get_signal();
@@ -898,7 +915,7 @@ namespace detail {
           empty_spins = 0;
         } else {
           ++empty_spins;
-          if (empty_spins >= default_spin_count) {
+          if (empty_spins >= spin_limit) {
             empty_spins = 0;
             std::ignore = signal_.wait_for_work(sig);
           }

@@ -1338,13 +1338,31 @@ TEST_CASE("Hybrid strategy", "[group_event_loop]")
     loop->stop();
   }
 
-  SECTION("configurable spin_count")
+  SECTION("enters wait mode after spin exhaustion")
   {
-    constexpr ev_loop::Hybrid default_hybrid{};
-    STATIC_REQUIRE(default_hybrid.spin_count == 1000);
+    // This test verifies the hybrid wait path is exercised.
+    // Use HybridWith<1> so it enters wait mode after just 1 empty poll.
+    struct ExtEvents
+    {
+      using emits = ev_loop::type_list<EventA>;
+    };
+    constexpr std::size_t kImmediateWaitSpinCount = 1;
+    using FastHybrid = ev_loop::HybridWith<kImmediateWaitSpinCount>;
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::ThreadGroup<FastHybrid, ReceiverA>, ev_loop::ExternalGroup<ExtEvents>>;
 
-    constexpr ev_loop::Hybrid custom_hybrid{ .spin_count = 500 };
-    STATIC_REQUIRE(custom_hybrid.spin_count == 500);
+    auto loop = Loop::setup().create_unique();
+    auto emitter = loop->get_external_emitter<ExtEvents>();
+    loop->start();
+
+    // Send event - the loop will be in wait mode almost immediately (after 1 empty poll)
+    while (!emitter.emit(EventA{ .value = kTestValue1 })) { std::this_thread::yield(); }
+
+    // Poll external events on main thread, which routes to receiver and wakes the waiting thread
+    while (!loop->poll_external<ExtEvents>()) { std::this_thread::yield(); }
+
+    REQUIRE(wait_for([&] { return loop->get<ReceiverA>().count.load() == kTestValue1; }));
+    loop->stop();
   }
 }
 // NOLINTEND(readability-function-cognitive-complexity)

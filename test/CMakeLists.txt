@@ -66,6 +66,7 @@ endfunction()
 # Constexpr test sources
 set(CONSTEXPR_TEST_SOURCES
     test_type_list_constexpr.cpp
+    test_group_event_loop_constexpr.cpp
 )
 
 # Constexpr tests - STATIC_REQUIRE runs as compile-time static_assert
