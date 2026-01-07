@@ -22,15 +22,11 @@ include(${Catch2_SOURCE_DIR}/extras/Catch.cmake)
 # Unit tests (runtime only)
 add_executable(tests)
 target_sources(tests PRIVATE
-    test_tagged_event.cpp
-    test_queue.cpp
-    test_event_loop.cpp
-    test_strategies.cpp
-    test_shared_event_loop_ptr.cpp
-    test_external_emitter.cpp
-    test_builder.cpp
-    test_move_optimization.cpp
-    test_threaded.cpp
+    test_external.cpp
+    test_group_event_loop.cpp
+    test_inbox.cpp
+    test_setup.cpp
+    test_strategy.cpp
     test_utils.cpp
 )
 target_link_libraries(tests
@@ -73,14 +69,12 @@ endfunction()
 
 # Constexpr test sources
 set(CONSTEXPR_TEST_SOURCES
+    test_external_constexpr.cpp
+    test_group_event_loop_constexpr.cpp
+    test_inbox_constexpr.cpp
+    test_setup_constexpr.cpp
+    test_strategy_constexpr.cpp
     test_type_list_constexpr.cpp
-    test_tagged_event_constexpr.cpp
-    test_queue_constexpr.cpp
-    test_event_loop_constexpr.cpp
-    test_strategies_constexpr.cpp
-    test_shared_event_loop_ptr_constexpr.cpp
-    test_external_emitter_constexpr.cpp
-    test_builder_constexpr.cpp
 )
 
 # Constexpr tests - STATIC_REQUIRE runs as compile-time static_assert
@@ -90,16 +84,32 @@ add_test_executable(constexpr_tests "constexpr" ${CONSTEXPR_TEST_SOURCES})
 add_test_executable(relaxed_tests "relaxed" ${CONSTEXPR_TEST_SOURCES})
 target_compile_definitions(relaxed_tests PRIVATE CATCH_CONFIG_RUNTIME_STATIC_REQUIRE)
 
-# Compile-failure test: verifies that duplicate receivers trigger static_assert
-add_executable(test_builder_duplicate_fail EXCLUDE_FROM_ALL test_builder_duplicate_fail.cpp)
-target_link_libraries(test_builder_duplicate_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME builder_duplicate_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_builder_duplicate_fail)
-set_tests_properties(builder_duplicate_should_fail PROPERTIES WILL_FAIL TRUE)
+# =============================================================================
+# Compile-failure tests (grouped by concept)
+# =============================================================================
 
-# Compile-failure test: verifies that tag_type_t rejects N >= uint32_t max
-add_executable(test_tag_type_overflow_fail EXCLUDE_FROM_ALL test_tag_type_overflow_fail.cpp)
-target_link_libraries(test_tag_type_overflow_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME tag_type_overflow_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_tag_type_overflow_fail)
-set_tests_properties(tag_type_overflow_should_fail PROPERTIES WILL_FAIL TRUE)
+# Helper function for compile-failure tests
+function(add_compile_fail_test TARGET_NAME)
+  add_executable(${TARGET_NAME} EXCLUDE_FROM_ALL ${TARGET_NAME}.cpp)
+  target_link_libraries(${TARGET_NAME} PRIVATE ev_loop::ev_loop)
+  add_test(NAME ${TARGET_NAME}
+           COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${TARGET_NAME})
+  set_tests_properties(${TARGET_NAME} PROPERTIES WILL_FAIL TRUE)
+endfunction()
+
+# external
+add_compile_fail_test(test_external_duplicate_fail)
+add_compile_fail_test(test_external_no_emits_fail)
+add_compile_fail_test(test_external_not_found_fail)
+
+# group_event_loop
+add_compile_fail_test(test_group_event_loop_invalid_type_fail)
+add_compile_fail_test(test_group_event_loop_no_groups_fail)
+add_compile_fail_test(test_group_event_loop_only_external_fail)
+add_compile_fail_test(test_group_event_loop_receiver_not_found_fail)
+
+# inbox
+add_compile_fail_test(test_inbox_capacity_fail)
+
+# type_list
+add_compile_fail_test(test_type_list_tag_overflow_fail)

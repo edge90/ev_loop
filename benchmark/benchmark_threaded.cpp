@@ -30,69 +30,27 @@ struct Pong
 };
 
 // =============================================================================
-// Benchmark 1: OwnThread C <-> OwnThread D
+// Receivers for multi-group benchmarks
 // =============================================================================
 
-struct C_OwnThread
+struct ReceiverC
 {
   using receives = ev_loop::type_list<Pong>;
   using emits = ev_loop::type_list<Ping>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::OwnThread;
 
-  std::atomic<int>* counter = nullptr;
+  std::atomic<int> counter{ 0 };
 
   template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
   {
-    if (counter) { counter->fetch_add(1, std::memory_order_relaxed); }
+    counter.fetch_add(1, std::memory_order_relaxed);
     dispatcher.emit(Ping{ event.value + 1 });
   }
 };
 
-struct D_OwnThread
+struct ReceiverD
 {
   using receives = ev_loop::type_list<Ping>;
   using emits = ev_loop::type_list<Pong>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::OwnThread;
-
-  std::atomic<int>* counter = nullptr;
-
-  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
-  {
-    if (counter) { counter->fetch_add(1, std::memory_order_relaxed); }
-    dispatcher.emit(Pong{ event.value + 1 });
-  }
-};
-
-// =============================================================================
-// Benchmark 2: SameThread A -> OwnThread D -> SameThread A
-// =============================================================================
-
-struct A_SameThread
-{
-  using receives = ev_loop::type_list<Pong>;
-  using emits = ev_loop::type_list<Ping>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::SameThread;
-
-  int counter = 0;
-  int last_value = 0;
-
-  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
-  {
-    ++counter;
-    last_value = event.value;
-    dispatcher.emit(Ping{ event.value + 1 });
-  }
-};
-
-struct D_OwnThread_ForMixed
-{
-  using receives = ev_loop::type_list<Ping>;
-  using emits = ev_loop::type_list<Pong>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> counter{ 0 };
 
@@ -103,40 +61,58 @@ struct D_OwnThread_ForMixed
   }
 };
 
-// =============================================================================
-// Benchmark 3: OwnThread D -> SameThread A -> OwnThread D
-// =============================================================================
-
-struct A_SameThread_Relay
+// Receivers for mixed benchmark (both run on threads now)
+struct MainThreadReceiver
 {
   using receives = ev_loop::type_list<Pong>;
   using emits = ev_loop::type_list<Ping>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::SameThread;
 
-  int counter = 0;
+  std::atomic<int> counter{ 0 };
 
   template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
   {
-    ++counter;
+    counter.fetch_add(1, std::memory_order_relaxed);
     dispatcher.emit(Ping{ event.value + 1 });
   }
 };
 
-struct D_OwnThread_Starter
+struct BackgroundReceiver
 {
   using receives = ev_loop::type_list<Ping>;
   using emits = ev_loop::type_list<Pong>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::OwnThread;
 
   std::atomic<int> counter{ 0 };
-  std::atomic<int> last_value{ 0 };
 
   template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
   {
     counter.fetch_add(1, std::memory_order_relaxed);
-    last_value.store(event.value, std::memory_order_relaxed);
+    dispatcher.emit(Pong{ event.value + 1 });
+  }
+};
+
+// Receivers for background-to-main benchmark
+struct MainPongReceiver
+{
+  using receives = ev_loop::type_list<Pong>;
+  using emits = ev_loop::type_list<Ping>;
+  std::atomic<int> counter{ 0 };
+
+  template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
+  {
+    counter.fetch_add(1, std::memory_order_relaxed);
+    dispatcher.emit(Ping{ event.value + 1 });
+  }
+};
+
+struct BackgroundPingReceiver
+{
+  using receives = ev_loop::type_list<Ping>;
+  using emits = ev_loop::type_list<Pong>;
+  std::atomic<int> counter{ 0 };
+
+  template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
+  {
+    counter.fetch_add(1, std::memory_order_relaxed);
     dispatcher.emit(Pong{ event.value + 1 });
   }
 };
@@ -146,155 +122,148 @@ struct D_OwnThread_Starter
 // =============================================================================
 
 namespace {
-constexpr int kOwnThreadTargetCount = 10'000'000;
+constexpr int kTwoGroupTargetCount = 10'000'000;
 constexpr int kMixedTargetCount = 1'000'000;
 } // namespace
 
-void benchmark_ownthread_to_ownthread()
+void benchmark_two_groups()
 {
-  std::println("=== Benchmark 1: OwnThread C <-> OwnThread D ===");
-
-  ev_loop::EventLoop<C_OwnThread, D_OwnThread> loop;
-
-  std::atomic<int> counter{ 0 };
-  loop.get<C_OwnThread>().counter = &counter;
-  loop.get<D_OwnThread>().counter = &counter;
-
-  loop.start();
-
+  std::println("=== Benchmark 1: Group 0 <-> Group 1 (2 threads) ===\n");
   using namespace std::chrono;
 
-  loop.emit(Ping{ 0 });
-
-  const auto started = steady_clock::now();
-
-  while (counter.load(std::memory_order_relaxed) < kOwnThreadTargetCount) { std::this_thread::yield(); }
-
-  const auto elapsed = steady_clock::now() - started;
-
-  loop.stop();
-
-  const auto final_count = counter.load();
-  std::println("  Events:     {}", final_count);
-  std::println("  Time:       {} us", duration_cast<microseconds>(elapsed).count());
-  std::println("  Throughput: {} events/sec\n", events_per_second(final_count, elapsed));
-}
-
-void benchmark_samethread_to_ownthread()
-{
-  std::println("=== Benchmark 2: SameThread A -> OwnThread D -> A ===");
-
-  using Loop = ev_loop::EventLoop<A_SameThread, D_OwnThread_ForMixed>;
-  using namespace std::chrono;
-
-  // Test with Spin strategy
+  // SpinGroup x2
   {
-    Loop loop;
-    loop.start();
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverC>, ev_loop::SpinGroup<ReceiverD>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
+
     const auto started = steady_clock::now();
 
-    ev_loop::Spin{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
-
+    while (loop->get<ReceiverC>().counter.load(std::memory_order_relaxed) < kTwoGroupTargetCount) {
+      std::this_thread::yield();
+    }
     const auto elapsed = steady_clock::now() - started;
-    loop.stop();
-    const auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
-    std::println("  Spin:   {} events/sec", events_per_second(total, elapsed));
+
+    loop->stop();
+    const auto total = loop->get<ReceiverC>().counter.load() + loop->get<ReceiverD>().counter.load();
+    std::println("  SpinGroup x2: {:>12} events/sec", events_per_second(total, elapsed));
   }
 
-  // Test with Yield strategy
+  // WaitGroup x2
   {
-    Loop loop;
-    loop.start();
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::WaitGroup<ReceiverC>, ev_loop::WaitGroup<ReceiverD>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
+
     const auto started = steady_clock::now();
 
-    ev_loop::Yield{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
-
+    while (loop->get<ReceiverC>().counter.load(std::memory_order_relaxed) < kTwoGroupTargetCount) {
+      std::this_thread::yield();
+    }
     const auto elapsed = steady_clock::now() - started;
-    loop.stop();
-    const auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
-    std::println("  Yield:  {} events/sec", events_per_second(total, elapsed));
-  }
 
-  // Test with Wait strategy
-  {
-    Loop loop;
-    loop.start();
-    loop.emit(Ping{ 0 });
-    const auto started = steady_clock::now();
-
-    ev_loop::Wait{ loop }.run_while([&] { return loop.get<A_SameThread>().counter < kMixedTargetCount; });
-
-    const auto elapsed = steady_clock::now() - started;
-    loop.stop();
-    const auto total = loop.get<A_SameThread>().counter + loop.get<D_OwnThread_ForMixed>().counter.load();
-    std::println("  Wait:   {} events/sec\n", events_per_second(total, elapsed));
+    loop->stop();
+    const auto total = loop->get<ReceiverC>().counter.load() + loop->get<ReceiverD>().counter.load();
+    std::println("  WaitGroup x2: {:>12} events/sec\n", events_per_second(total, elapsed));
   }
 }
 
-void benchmark_ownthread_to_samethread()
+void benchmark_main_to_background()
 {
-  std::println("=== Benchmark 3: OwnThread D -> SameThread A -> D ===");
-
-  using Loop = ev_loop::EventLoop<A_SameThread_Relay, D_OwnThread_Starter>;
+  std::println("=== Benchmark 2: Main Thread -> Background Thread ===\n");
   using namespace std::chrono;
 
-  // Test with Spin strategy
+  // SpinGroup x2
   {
-    Loop loop;
-    loop.start();
-    loop.emit(Pong{ 0 });
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::SpinGroup<MainThreadReceiver>, ev_loop::SpinGroup<BackgroundReceiver>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
+
     const auto started = steady_clock::now();
 
-    ev_loop::Spin{ loop }.run_while(
-      [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
-
+    while (loop->get<MainThreadReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
+      std::this_thread::yield();
+    }
     const auto elapsed = steady_clock::now() - started;
-    loop.stop();
-    const auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
-    std::println("  Spin:   {} events/sec", events_per_second(total, elapsed));
+
+    loop->stop();
+    const auto total = loop->get<MainThreadReceiver>().counter.load() + loop->get<BackgroundReceiver>().counter.load();
+    std::println("  SpinGroup x2: {:>12} events/sec", events_per_second(total, elapsed));
   }
 
-  // Test with Yield strategy
+  // WaitGroup x2
   {
-    Loop loop;
-    loop.start();
-    loop.emit(Pong{ 0 });
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::WaitGroup<MainThreadReceiver>, ev_loop::WaitGroup<BackgroundReceiver>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
+
     const auto started = steady_clock::now();
 
-    ev_loop::Yield{ loop }.run_while(
-      [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
-
+    while (loop->get<MainThreadReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
+      std::this_thread::yield();
+    }
     const auto elapsed = steady_clock::now() - started;
-    loop.stop();
-    const auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
-    std::println("  Yield:  {} events/sec", events_per_second(total, elapsed));
-  }
 
-  // Test with Wait strategy
-  {
-    Loop loop;
-    loop.start();
-    loop.emit(Pong{ 0 });
-    const auto started = steady_clock::now();
-
-    ev_loop::Wait{ loop }.run_while(
-      [&] { return loop.get<D_OwnThread_Starter>().counter.load(std::memory_order_relaxed) < kMixedTargetCount; });
-
-    const auto elapsed = steady_clock::now() - started;
-    loop.stop();
-    const auto total = loop.get<A_SameThread_Relay>().counter + loop.get<D_OwnThread_Starter>().counter.load();
-    std::println("  Wait:   {} events/sec\n", events_per_second(total, elapsed));
+    loop->stop();
+    const auto total = loop->get<MainThreadReceiver>().counter.load() + loop->get<BackgroundReceiver>().counter.load();
+    std::println("  WaitGroup x2: {:>12} events/sec\n", events_per_second(total, elapsed));
   }
 }
 
-// NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in benchmarks
+void benchmark_background_to_main()
+{
+  std::println("=== Benchmark 3: Background Thread -> Main Thread ===\n");
+  using namespace std::chrono;
+
+  // SpinGroup x2
+  {
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::SpinGroup<MainPongReceiver>, ev_loop::SpinGroup<BackgroundPingReceiver>>;
+    auto loop = Loop::setup().prime(Pong{ 0 }).create_unique();
+    loop->start();
+
+    const auto started = steady_clock::now();
+
+    while (loop->get<BackgroundPingReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
+      std::this_thread::yield();
+    }
+    const auto elapsed = steady_clock::now() - started;
+
+    loop->stop();
+    const auto total =
+      loop->get<MainPongReceiver>().counter.load() + loop->get<BackgroundPingReceiver>().counter.load();
+    std::println("  SpinGroup x2: {:>12} events/sec", events_per_second(total, elapsed));
+  }
+
+  // WaitGroup x2
+  {
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::WaitGroup<MainPongReceiver>, ev_loop::WaitGroup<BackgroundPingReceiver>>;
+    auto loop = Loop::setup().prime(Pong{ 0 }).create_unique();
+    loop->start();
+
+    const auto started = steady_clock::now();
+
+    while (loop->get<BackgroundPingReceiver>().counter.load(std::memory_order_relaxed) < kMixedTargetCount) {
+      std::this_thread::yield();
+    }
+    const auto elapsed = steady_clock::now() - started;
+
+    loop->stop();
+    const auto total =
+      loop->get<MainPongReceiver>().counter.load() + loop->get<BackgroundPingReceiver>().counter.load();
+    std::println("  WaitGroup x2: {:>12} events/sec\n", events_per_second(total, elapsed));
+  }
+}
+
+// NOLINTNEXTLINE(bugprone-exception-escape)
 int main()
 {
-  std::println("");
-  benchmark_ownthread_to_ownthread();
-  benchmark_samethread_to_ownthread();
-  benchmark_ownthread_to_samethread();
+  std::println("=== GroupEventLoop Threaded Benchmark ===\n");
+  benchmark_two_groups();
+  benchmark_main_to_background();
+  benchmark_background_to_main();
   return 0;
 }

@@ -1,5 +1,4 @@
 #include <chrono>
-#include <cstddef>
 #include <ev_loop/ev.hpp>
 #include <print>
 #include <tuple>
@@ -19,37 +18,27 @@ struct Pong
 };
 
 // =============================================================================
-// Same-thread receiver: Logger
-// Runs on the event loop thread, receives via queue dispatch
+// Receivers for single-group benchmarks
 // =============================================================================
 
 struct A
 {
   using receives = ev_loop::type_list<Pong>;
   using emits = ev_loop::type_list<Ping>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::SameThread;
 
-  // cppcheck-suppress functionStatic ; on_event must be member function for ev library
+  // cppcheck-suppress functionStatic
   template<typename Dispatcher> void on_event(Pong event, Dispatcher& dispatcher)
   {
     dispatcher.emit(Ping{ event.value + 1 });
   }
 };
 
-// =============================================================================
-// Same-thread receiver: Controller
-// Coordinates the system, emits events to start processing
-// =============================================================================
-
 struct B
 {
   using receives = ev_loop::type_list<Ping>;
   using emits = ev_loop::type_list<Pong>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::SameThread;
 
-  // cppcheck-suppress functionStatic ; on_event must be member function for ev library
+  // cppcheck-suppress functionStatic
   template<typename Dispatcher> void on_event(Ping event, Dispatcher& dispatcher)
   {
     dispatcher.emit(Pong{ event.value + 1 });
@@ -71,84 +60,70 @@ template<typename Count, typename Duration> auto events_per_second(Count event_c
 
 } // namespace
 
-// NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in benchmarks
+// NOLINTNEXTLINE(bugprone-exception-escape)
 int main()
 {
   using namespace std::chrono;
 
   constexpr int kIterations = 10'000'000;
-  constexpr std::size_t kHybridSpinCount = 1000;
 
-  // Spin strategy benchmark
+  std::println("=== GroupEventLoop Strategy Benchmark ===");
+  std::println("Iterations: {}\n", kIterations);
+
+  // SpinGroup benchmark
   {
-    ev_loop::EventLoop<A, B> loop;
-    loop.start();
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<A, B>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
-    ev_loop::Spin strategy{ loop };
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
-    std::println("Spin::poll():   {} us ({} events/sec)",
+    std::println("SpinGroup:   {:>8} us  ({:>12} events/sec)",
       duration_cast<microseconds>(elapsed).count(),
       events_per_second(kIterations, elapsed));
-
-    loop.stop();
   }
 
-  // Yield strategy benchmark
+  // YieldGroup benchmark
   {
-    ev_loop::EventLoop<A, B> loop;
-    loop.start();
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::YieldGroup<A, B>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
-    ev_loop::Yield strategy{ loop };
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
-    std::println("Yield::poll():  {} us ({} events/sec)",
+    std::println("YieldGroup:  {:>8} us  ({:>12} events/sec)",
       duration_cast<microseconds>(elapsed).count(),
       events_per_second(kIterations, elapsed));
-
-    loop.stop();
   }
 
-  // Hybrid strategy benchmark
+  // HybridGroup benchmark
   {
-    ev_loop::EventLoop<A, B> loop;
-    loop.start();
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::HybridGroup<A, B>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
-    ev_loop::Hybrid strategy{ loop, kHybridSpinCount };
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
-    std::println("Hybrid::poll(): {} us ({} events/sec)",
+    std::println("HybridGroup: {:>8} us  ({:>12} events/sec)",
       duration_cast<microseconds>(elapsed).count(),
       events_per_second(kIterations, elapsed));
-
-    loop.stop();
   }
 
-  // Wait strategy benchmark
+  // WaitGroup benchmark
   {
-    ev_loop::EventLoop<A, B> loop;
-    loop.start();
-    loop.emit(Ping{ 0 });
+    using Loop = ev_loop::GroupEventLoop<ev_loop::WaitGroup<A, B>>;
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
 
-    ev_loop::Wait strategy{ loop };
     const auto started = steady_clock::now();
-    for (int i = 0; i < kIterations; ++i) { std::ignore = strategy.poll(); }
+    for (int i = 0; i < kIterations; ++i) { std::ignore = loop->poll_group<0>(); }
     const auto elapsed = steady_clock::now() - started;
 
-    std::println("Wait::poll():   {} us ({} events/sec)",
+    std::println("WaitGroup:   {:>8} us  ({:>12} events/sec)",
       duration_cast<microseconds>(elapsed).count(),
       events_per_second(kIterations, elapsed));
-
-    loop.stop();
   }
 
   return 0;

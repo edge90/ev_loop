@@ -21,7 +21,7 @@ struct DataEvent
 struct ProcessedEvent
 {
   std::string result;
-  int source_id;
+  int source_id{};
 };
 
 struct LogEvent
@@ -35,42 +35,32 @@ struct ChainEvent
 };
 
 // =============================================================================
-// Same-thread receiver: Logger
-// Runs on the event loop thread, receives via queue dispatch
+// Receivers for Group 0 (main thread via manual polling)
 // =============================================================================
 
 struct Logger
 {
   using receives = ev_loop::type_list<LogEvent, ProcessedEvent>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::SameThread;
 
-  // cppcheck-suppress functionStatic ; on_event must be member function for ev library
+  // cppcheck-suppress functionStatic
   template<typename Dispatcher> void on_event(const LogEvent& event, Dispatcher& /*dispatcher*/)
   {
     std::println("[LOG] {}", event.message);
   }
 
-  // cppcheck-suppress functionStatic ; on_event must be member function for ev library
+  // cppcheck-suppress functionStatic
   template<typename Dispatcher> void on_event(const ProcessedEvent& event, Dispatcher& /*dispatcher*/)
   {
     std::println("[RESULT] Source {}: {}", event.source_id, event.result);
   }
 };
 
-// =============================================================================
-// Same-thread receiver: Controller
-// Coordinates the system, emits events to start processing
-// =============================================================================
-
 struct Controller
 {
   using receives = ev_loop::type_list<StartEvent>;
   using emits = ev_loop::type_list<DataEvent, LogEvent>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::SameThread;
 
-  // cppcheck-suppress functionStatic ; on_event must be member function for ev library
+  // cppcheck-suppress functionStatic
   template<typename Dispatcher> void on_event(StartEvent event, Dispatcher& dispatcher)
   {
     dispatcher.emit(LogEvent{ "Controller received start event #" + std::to_string(event.id) });
@@ -78,43 +68,12 @@ struct Controller
   }
 };
 
-// =============================================================================
-// Own-thread receiver: Processor
-// Runs on its own thread, receives direct pushes from emitters
-// =============================================================================
-
-struct Processor
-{
-  using receives = ev_loop::type_list<DataEvent>;
-  using emits = ev_loop::type_list<ProcessedEvent, LogEvent>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::OwnThread;
-
-  int counter = 0;
-
-  template<typename Dispatcher> void on_event(const DataEvent& event, Dispatcher& dispatcher)
-  {
-    ++counter;
-    const std::string result = "processed(" + event.data + ")";
-    dispatcher.emit(LogEvent{ "Processor handled: " + event.data });
-    dispatcher.emit(ProcessedEvent{ .result = result, .source_id = counter });
-  }
-};
-
-// =============================================================================
-// Same-thread receiver: ChainHandler
-// Demonstrates that same-thread -> same-thread emission goes through queue
-// (preventing stack recursion)
-// =============================================================================
-
 struct ChainHandler
 {
   using receives = ev_loop::type_list<ChainEvent>;
   using emits = ev_loop::type_list<ChainEvent, LogEvent>;
-  // cppcheck-suppress unusedStructMember
-  using thread_mode = ev_loop::SameThread;
 
-  // cppcheck-suppress functionStatic ; on_event must be member function for ev library
+  // cppcheck-suppress functionStatic
   template<typename Dispatcher> void on_event(ChainEvent event, Dispatcher& dispatcher)
   {
     static constexpr int max_depth = 5;
@@ -128,6 +87,26 @@ struct ChainHandler
 };
 
 // =============================================================================
+// Receiver for Group 1 (runs on background thread)
+// =============================================================================
+
+struct Processor
+{
+  using receives = ev_loop::type_list<DataEvent>;
+  using emits = ev_loop::type_list<ProcessedEvent, LogEvent>;
+
+  int counter = 0;
+
+  template<typename Dispatcher> void on_event(const DataEvent& event, Dispatcher& dispatcher)
+  {
+    ++counter;
+    const std::string result = "processed(" + event.data + ")";
+    dispatcher.emit(LogEvent{ "Processor handled: " + event.data });
+    dispatcher.emit(ProcessedEvent{ .result = result, .source_id = counter });
+  }
+};
+
+// =============================================================================
 // Main
 // =============================================================================
 
@@ -135,40 +114,43 @@ namespace {
 constexpr int kThreadedReceiverDelayMs = 50;
 } // namespace
 
-// NOLINTNEXTLINE(bugprone-exception-escape) - std::println may throw but we accept that in examples
+// NOLINTNEXTLINE(bugprone-exception-escape)
 int main()
 {
-  ev_loop::EventLoop<Logger, Controller, Processor, ChainHandler> loop;
-
-  loop.start();
-
   std::println("=== Event Loop Demo ===\n");
 
-  // Test 1: Normal event flow
-  std::println("--- Test 1: Normal event flow ---");
-  loop.emit(StartEvent{ 1 });
-  loop.emit(StartEvent{ 2 });
+  // Test 1: Normal event flow with two groups
+  std::println("--- Test 1: Normal event flow (2 groups) ---");
+  {
+    // Group 0: Logger, Controller - polled on main thread
+    // Group 1: Processor - runs on background thread
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<Logger, Controller>, ev_loop::SpinGroup<Processor>>;
 
-  // Process events
-  ev_loop::Spin strategy{ loop };
-  while (strategy.poll()) {}
+    // Prime events and start
+    auto loop = Loop::setup().prime(StartEvent{ 1 }).prime(StartEvent{ 2 }).create_unique();
+    loop->start();
 
-  // Give threaded receiver time
-  std::this_thread::sleep_for(std::chrono::milliseconds(kThreadedReceiverDelayMs));
-  while (strategy.poll()) {}
+    // Wait for processing to complete
+    std::this_thread::sleep_for(std::chrono::milliseconds(kThreadedReceiverDelayMs));
+
+    loop->stop();
+    std::println("Processor handled {} events\n", loop->get<Processor>().counter);
+  }
 
   // Test 2: Chain events (demonstrates queue-based dispatch prevents recursion)
-  std::println("\n--- Test 2: Chain events (queue prevents recursion) ---");
-  loop.emit(ChainEvent{ 1 });
+  // Single group to show intra-group event chaining
+  std::println("--- Test 2: Chain events (queue prevents recursion) ---");
+  {
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<Logger, ChainHandler>>;
 
-  // Each ChainEvent handler emits another ChainEvent via queue
-  // Without queue dispatch, this would cause stack recursion
-  while (strategy.poll()) {}
+    // Prime chain event then poll manually
+    auto loop = Loop::setup().prime(ChainEvent{ 1 }).create_unique();
 
-  loop.stop();
+    // Each ChainEvent handler emits another ChainEvent via queue
+    // Without queue dispatch, this would cause stack recursion
+    while (loop->poll_group<0>()) {}
+  }
 
   std::println("\n=== Demo Complete ===");
-  std::println("Processor handled {} events", loop.get<Processor>().counter);
-
   return 0;
 }
