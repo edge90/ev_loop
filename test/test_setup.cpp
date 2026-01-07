@@ -67,5 +67,51 @@ TEST_CASE("Setup builder", "[setup]")
 
     REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
   }
+
+  SECTION("create() returns by value without primed events")
+  {
+    auto loop = Loop::setup().create();
+
+    // No events primed, so poll returns false immediately
+    REQUIRE_FALSE(loop.poll_group<0>());
+    REQUIRE(loop.get<ReceiverA>().count.load() == 0);
+  }
+
+  SECTION("create() returns by value with primed events")
+  {
+    auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create();
+
+    while (loop.poll_group<0>()) {}
+
+    REQUIRE(loop.get<ReceiverA>().count.load() == kTestValue1);
+  }
+
+  SECTION("create() with multiple primed events")
+  {
+    auto loop =
+      Loop::setup().prime(EventA{ .value = 1 }).prime(EventA{ .value = 2 }).prime(EventA{ .value = 3 }).create();
+
+    while (loop.poll_group<0>()) {}
+
+    REQUIRE(loop.get<ReceiverA>().count.load() == 6);
+  }
+
+  SECTION("create_shared() returns shared_ptr")
+  {
+    auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_shared();
+
+    while (loop->poll_group<0>()) {}
+
+    REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
+  }
+
+  SECTION("create_shared() without primed events")
+  {
+    auto loop = Loop::setup().create_shared();
+
+    // No events primed, so poll returns false immediately
+    REQUIRE_FALSE(loop->poll_group<0>());
+    REQUIRE(loop->get<ReceiverA>().count.load() == 0);
+  }
 }
 // NOLINTEND(readability-function-cognitive-complexity)
