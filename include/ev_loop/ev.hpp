@@ -1367,13 +1367,22 @@ public:
   template<std::size_t I> void run()
   {
     static_assert(I < group_count, "Group index out of bounds");
+    threads_starting_.store(true, std::memory_order_release);
     running_.store(true, std::memory_order_release);
     start_groups_except<I>(std::make_index_sequence<group_count>{});
+    threads_starting_.store(false, std::memory_order_release);
     run_group<I>();
   }
 
   // Wait for all groups to finish
-  void join() { join_all_groups(std::make_index_sequence<group_count>{}); }
+  void join()
+  {
+    // Wait for thread creation to complete before checking joinable()
+    // GCOVR_EXCL_START - race condition defense, validated by TSan
+    while (threads_starting_.load(std::memory_order_acquire)) { std::this_thread::yield(); }
+    // GCOVR_EXCL_STOP
+    join_all_groups(std::make_index_sequence<group_count>{});
+  }
 
   // Stop all groups
   void stop()
@@ -1485,8 +1494,10 @@ private:
   // Start all threads (called by Builder::start() or public start())
   void start_threads()
   {
+    threads_starting_.store(true, std::memory_order_release);
     running_.store(true, std::memory_order_release);
     start_all_groups(std::make_index_sequence<group_count>{});
+    threads_starting_.store(false, std::memory_order_release);
   }
 
   // Prime an event before starting (called by Builder::prime())
@@ -1522,8 +1533,8 @@ private:
   {
     Event event;
     if (std::get<ExtGroupIdx>(external_inboxes_)->template try_pop<Event>(event)) {
-      // Route to internal groups (treat as coming from group 0 for routing purposes)
-      route_internal_event<0>(std::move(event), std::make_index_sequence<group_count>{});
+      // Route to internal groups with AlwaysNotify=true since this is from external
+      route_internal_event<0, true>(std::move(event), std::make_index_sequence<group_count>{});
       return true;
     }
     return false;
@@ -1601,7 +1612,8 @@ private:
 
   // Route an internal event (from a receiver in SourceGroup) to appropriate groups
   // Uses copy-to-N-1, move-to-last optimization via pure compile-time iteration
-  template<std::size_t SourceGroup, typename Event, std::size_t... Is>
+  // AlwaysNotify=true for external events (always notify even if SourceGroup==DestGroup)
+  template<std::size_t SourceGroup, bool AlwaysNotify = false, typename Event, std::size_t... Is>
   void route_internal_event(Event&& event, std::index_sequence<Is...> /*unused*/)
   {
     using E = std::decay_t<Event>;
@@ -1611,16 +1623,16 @@ private:
       // No groups handle this event
     } else if constexpr (handler_count == 1) {
       // Single handler: move directly (only one will actually push due to if constexpr)
-      (push_to_group_impl<SourceGroup, Is, E, true>(std::forward<Event>(event)), ...);
+      (push_to_group_impl<SourceGroup, Is, E, true, AlwaysNotify>(std::forward<Event>(event)), ...);
     } else {
       // Multiple handlers: copy to N-1, move to last using compile-time counter
-      route_to_multiple_groups<SourceGroup, E, 0, handler_count>(
+      route_to_multiple_groups<SourceGroup, E, 0, handler_count, AlwaysNotify>(
         std::forward<Event>(event), std::index_sequence<Is...>{});
     }
   }
 
   // Route to multiple groups with compile-time counter for copy vs move decision
-  template<std::size_t SourceGroup, typename Event, std::size_t Seen, std::size_t Total>
+  template<std::size_t SourceGroup, typename Event, std::size_t Seen, std::size_t Total, bool AlwaysNotify>
   static void route_to_multiple_groups(Event&& /*event*/, std::index_sequence<> /*unused*/)
   {
     // Base case: no more groups to check
@@ -1630,6 +1642,7 @@ private:
     typename Event,
     std::size_t Seen,
     std::size_t Total,
+    bool AlwaysNotify,
     std::size_t First,
     std::size_t... Rest>
   void route_to_multiple_groups(Event&& event, std::index_sequence<First, Rest...> /*unused*/)
@@ -1640,22 +1653,23 @@ private:
       constexpr bool is_last = (new_seen == Total);
       if constexpr (is_last) {
         // Last handler: move
-        push_to_group_impl<SourceGroup, First, Event, true>(std::forward<Event>(event));
+        push_to_group_impl<SourceGroup, First, Event, true, AlwaysNotify>(std::forward<Event>(event));
       } else {
         // Not last: copy
-        push_to_group_impl<SourceGroup, First, Event, false>(event);
-        route_to_multiple_groups<SourceGroup, Event, new_seen, Total>(
+        push_to_group_impl<SourceGroup, First, Event, false, AlwaysNotify>(event);
+        route_to_multiple_groups<SourceGroup, Event, new_seen, Total, AlwaysNotify>(
           std::forward<Event>(event), std::index_sequence<Rest...>{});
       }
     } else {
       // This group doesn't handle the event, continue to next
-      route_to_multiple_groups<SourceGroup, Event, Seen, Total>(
+      route_to_multiple_groups<SourceGroup, Event, Seen, Total, AlwaysNotify>(
         std::forward<Event>(event), std::index_sequence<Rest...>{});
     }
   }
 
   // Unified push implementation: Move=true for move, Move=false for copy
-  template<std::size_t SourceGroup, std::size_t DestGroup, typename Event, bool Move, typename E>
+  // AlwaysNotify=true skips the SourceGroup!=DestGroup check (for external events)
+  template<std::size_t SourceGroup, std::size_t DestGroup, typename Event, bool Move, bool AlwaysNotify, typename E>
   void push_to_group_impl(E&& event)
   {
     using Group = detail::type_at_t<DestGroup, Groups...>;
@@ -1665,7 +1679,7 @@ private:
       } else {
         std::get<DestGroup>(queues_).template push<Event>(Event{ event }); // explicit copy
       }
-      if constexpr (SourceGroup != DestGroup) { std::get<DestGroup>(signals_).notify_work_available(); }
+      if constexpr (AlwaysNotify || SourceGroup != DestGroup) { std::get<DestGroup>(signals_).notify_work_available(); }
     }
   }
 
@@ -1802,6 +1816,7 @@ private:
   repeat_type_t<std::thread, group_count> threads_{};
   repeat_type_t<detail::GroupWorkSignal, group_count> signals_{};
   std::atomic<bool> running_{ false };
+  std::atomic<bool> threads_starting_{ false }; // Synchronize thread creation with join()
 
   // Per-event-type queues: one set per group (ECS/data-oriented design)
   // Each GroupEventQueues gets the full group list for SPSC/MPSC selection
