@@ -1,42 +1,107 @@
 // NOLINTBEGIN(misc-include-cleaner)
 #include <catch2/catch_test_macros.hpp>
-#include <cstddef>
 #include <ev_loop/ev.hpp>
+#include <type_traits>
 // NOLINTEND(misc-include-cleaner)
 
-TEST_CASE("is_hybrid_strategy_v is computed at compile time", "[strategy][constexpr]")
-{
-  constexpr std::size_t kCustomSpinCount = 500;
+namespace {
 
-  SECTION("HybridWith<N> is detected for any N")
+// =============================================================================
+// Minimal types for constexpr tests
+// =============================================================================
+
+struct EventA
+{
+};
+
+struct EventB
+{
+};
+
+struct ReceiverA
+{
+  using receives = ev_loop::type_list<EventA>;
+  using emits = ev_loop::type_list<EventB>;
+  template<typename D> static void on_event(EventA /*unused*/, D& /*unused*/) {}
+};
+
+struct ReceiverB
+{
+  using receives = ev_loop::type_list<EventB>;
+  using emits = ev_loop::type_list<>;
+  template<typename D> static void on_event(EventB /*unused*/, D& /*unused*/) {}
+};
+
+// =============================================================================
+// ThreadGroup type trait tests
+// =============================================================================
+
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("ThreadGroup type traits", "[group_event_loop][constexpr]")
+{
+  using Group = ev_loop::ThreadGroup<ev_loop::Spin, ReceiverA, ReceiverB>;
+
+  SECTION("is_thread_group detects ThreadGroup")
   {
-    STATIC_REQUIRE(ev_loop::detail::is_hybrid_strategy_v<ev_loop::Hybrid>);
-    STATIC_REQUIRE(ev_loop::detail::is_hybrid_strategy_v<ev_loop::HybridWith<1>>);
-    STATIC_REQUIRE(ev_loop::detail::is_hybrid_strategy_v<ev_loop::HybridWith<kCustomSpinCount>>);
+    STATIC_REQUIRE(ev_loop::detail::is_thread_group_v<Group>);
+    STATIC_REQUIRE_FALSE(ev_loop::detail::is_thread_group_v<ReceiverA>);
+    STATIC_REQUIRE_FALSE(ev_loop::detail::is_thread_group_v<int>);
   }
 
-  SECTION("other strategies are not hybrid")
+  SECTION("group_receivers_t extracts receiver list")
   {
-    STATIC_REQUIRE_FALSE(ev_loop::detail::is_hybrid_strategy_v<ev_loop::Spin>);
-    STATIC_REQUIRE_FALSE(ev_loop::detail::is_hybrid_strategy_v<ev_loop::Wait>);
-    STATIC_REQUIRE_FALSE(ev_loop::detail::is_hybrid_strategy_v<ev_loop::Yield>);
-    STATIC_REQUIRE_FALSE(ev_loop::detail::is_hybrid_strategy_v<int>);
+    using Receivers = ev_loop::detail::group_receivers_t<Group>;
+    STATIC_REQUIRE(std::is_same_v<Receivers, ev_loop::type_list<ReceiverA, ReceiverB>>);
+  }
+
+  SECTION("group_strategy_t extracts strategy")
+  {
+    using Strategy = ev_loop::detail::group_strategy_t<Group>;
+    STATIC_REQUIRE(std::is_same_v<Strategy, ev_loop::Spin>);
+  }
+}
+// NOLINTEND(readability-function-cognitive-complexity)
+
+// =============================================================================
+// GroupEventLoop group_count tests
+// =============================================================================
+
+TEST_CASE("GroupEventLoop group_count", "[group_event_loop][constexpr]")
+{
+  SECTION("single group")
+  {
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+    STATIC_REQUIRE(Loop::group_count == 1);
+  }
+
+  SECTION("multiple groups")
+  {
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::WaitGroup<ReceiverB>>;
+    STATIC_REQUIRE(Loop::group_count == 2);
   }
 }
 
-TEST_CASE("HybridWith spin_count is computed at compile time", "[strategy][constexpr]")
+// =============================================================================
+// Group event routing trait tests
+// =============================================================================
+
+TEST_CASE("Group handles event trait", "[group_event_loop][constexpr]")
 {
-  constexpr std::size_t kCustomSpinCount = 500;
-  constexpr std::size_t kMinSpinCount = 1;
+  using GroupA = ev_loop::SpinGroup<ReceiverA>;
+  using GroupB = ev_loop::WaitGroup<ReceiverB>;
 
-  SECTION("default Hybrid uses kDefaultHybridSpinCount")
-  {
-    STATIC_REQUIRE(ev_loop::Hybrid::spin_count == ev_loop::kDefaultHybridSpinCount);
-  }
+  STATIC_REQUIRE(ev_loop::detail::group_handles_event_v<GroupA, EventA>);
+  STATIC_REQUIRE_FALSE(ev_loop::detail::group_handles_event_v<GroupA, EventB>);
 
-  SECTION("custom HybridWith<N> has spin_count of N")
-  {
-    STATIC_REQUIRE(ev_loop::HybridWith<kCustomSpinCount>::spin_count == kCustomSpinCount);
-    STATIC_REQUIRE(ev_loop::HybridWith<kMinSpinCount>::spin_count == kMinSpinCount);
-  }
+  STATIC_REQUIRE(ev_loop::detail::group_handles_event_v<GroupB, EventB>);
+  STATIC_REQUIRE_FALSE(ev_loop::detail::group_handles_event_v<GroupB, EventA>);
 }
+
+TEST_CASE("Group all events trait", "[group_event_loop][constexpr]")
+{
+  using GroupA = ev_loop::SpinGroup<ReceiverA>;
+  using Events = ev_loop::detail::group_all_events_t<GroupA>;
+  STATIC_REQUIRE(ev_loop::detail::contains_v<Events, EventA>);
+}
+
+} // namespace

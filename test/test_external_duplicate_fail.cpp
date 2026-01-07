@@ -6,7 +6,7 @@
 struct DummyReceiver
 {
   using receives = ev_loop::type_list<int>;
-  void on(int) {}
+  void on(int /*unused*/) {}
 };
 
 struct ExternalInputs

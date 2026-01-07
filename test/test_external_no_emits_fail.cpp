@@ -7,7 +7,7 @@ struct TestReceiver
 {
   using receives = ev_loop::type_list<>;
   using emits = ev_loop::type_list<>;
-  template<typename D> void on_event(int /*unused*/, D& /*unused*/) {}
+  template<typename D> static void on_event(int /*unused*/, D& /*unused*/) {}
 };
 
 // This type does NOT define emits, should fail when used with ExternalGroup

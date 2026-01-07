@@ -9,9 +9,7 @@
 #include <ev_loop/ev.hpp>
 #include <memory>
 #include <thread>
-#include <type_traits>
 #include <utility>
-#include <vector>
 // NOLINTEND(misc-include-cleaner)
 
 namespace {
@@ -33,7 +31,6 @@ template<typename Pred> bool wait_for(const Pred& pred, std::chrono::millisecond
   }
   return true;
 }
-} // namespace
 
 // =============================================================================
 // Event types for GroupEventLoop tests
@@ -112,64 +109,10 @@ struct CounterReceiver
 };
 
 // =============================================================================
-// Type trait tests
+// GroupEventLoop construction tests
 // =============================================================================
 
 // NOLINTBEGIN(readability-function-cognitive-complexity)
-TEST_CASE("ThreadGroup type traits", "[group_event_loop]")
-{
-  using Group = ev_loop::ThreadGroup<ev_loop::Spin, ReceiverA, ReceiverB>;
-
-  SECTION("is_thread_group detects ThreadGroup")
-  {
-    STATIC_REQUIRE(ev_loop::detail::is_thread_group_v<Group>);
-    STATIC_REQUIRE_FALSE(ev_loop::detail::is_thread_group_v<ReceiverA>);
-    STATIC_REQUIRE_FALSE(ev_loop::detail::is_thread_group_v<int>);
-  }
-
-  SECTION("group_receivers_t extracts receiver list")
-  {
-    using Receivers = ev_loop::detail::group_receivers_t<Group>;
-    STATIC_REQUIRE(std::is_same_v<Receivers, ev_loop::type_list<ReceiverA, ReceiverB>>);
-  }
-
-  SECTION("group_strategy_t extracts strategy")
-  {
-    using Strategy = ev_loop::detail::group_strategy_t<Group>;
-    STATIC_REQUIRE(std::is_same_v<Strategy, ev_loop::Spin>);
-  }
-}
-
-TEST_CASE("ThreadGroup convenience aliases", "[group_event_loop]")
-{
-  SECTION("SpinGroup alias")
-  {
-    using Group = ev_loop::SpinGroup<ReceiverA>;
-    STATIC_REQUIRE(std::is_same_v<ev_loop::detail::group_strategy_t<Group>, ev_loop::Spin>);
-  }
-
-  SECTION("WaitGroup alias")
-  {
-    using Group = ev_loop::WaitGroup<ReceiverA>;
-    STATIC_REQUIRE(std::is_same_v<ev_loop::detail::group_strategy_t<Group>, ev_loop::Wait>);
-  }
-
-  SECTION("YieldGroup alias")
-  {
-    using Group = ev_loop::YieldGroup<ReceiverA>;
-    STATIC_REQUIRE(std::is_same_v<ev_loop::detail::group_strategy_t<Group>, ev_loop::Yield>);
-  }
-
-  SECTION("HybridGroup alias")
-  {
-    using Group = ev_loop::HybridGroup<ReceiverA>;
-    STATIC_REQUIRE(std::is_same_v<ev_loop::detail::group_strategy_t<Group>, ev_loop::Hybrid>);
-  }
-}
-
-// =============================================================================
-// GroupEventLoop construction tests
-// =============================================================================
 
 TEST_CASE("GroupEventLoop construction", "[group_event_loop]")
 {
@@ -178,7 +121,6 @@ TEST_CASE("GroupEventLoop construction", "[group_event_loop]")
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
     auto loop = Loop::setup().create_unique();
     REQUIRE_FALSE(loop->is_running());
-    STATIC_REQUIRE(Loop::group_count == 1);
   }
 
   SECTION("Multiple groups construction")
@@ -186,14 +128,13 @@ TEST_CASE("GroupEventLoop construction", "[group_event_loop]")
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::WaitGroup<ReceiverB>>;
     auto loop = Loop::setup().create_unique();
     REQUIRE_FALSE(loop->is_running());
-    STATIC_REQUIRE(Loop::group_count == 2);
   }
 
   SECTION("Group with multiple receivers")
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA, ReceiverB, ReceiverC>>;
     auto loop = Loop::setup().create_unique();
-    STATIC_REQUIRE(Loop::group_count == 1);
+    REQUIRE_FALSE(loop->is_running());
   }
 }
 
@@ -307,215 +248,6 @@ TEST_CASE("GroupStorage access by index", "[group_event_loop]")
 }
 
 // =============================================================================
-// SpscInbox tests
-// =============================================================================
-
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-TEST_CASE("SpscInbox", "[inbox]")
-{
-  ev_loop::detail::SpscInbox<int> inbox;
-
-  SECTION("starts empty") { REQUIRE(inbox.empty()); }
-
-  SECTION("push and pop")
-  {
-    REQUIRE(inbox.push(kTestValue1));
-    REQUIRE(inbox.push(kTestValue2));
-    REQUIRE_FALSE(inbox.empty());
-    REQUIRE(inbox.size() == 2);
-
-    int value = 0;
-    REQUIRE(inbox.try_pop(value));
-    REQUIRE(value == kTestValue1);
-    REQUIRE(inbox.try_pop(value));
-    REQUIRE(value == kTestValue2);
-    REQUIRE(inbox.empty());
-    REQUIRE_FALSE(inbox.try_pop(value));
-  }
-
-  SECTION("drain")
-  {
-    inbox.push(1);
-    inbox.push(2);
-    inbox.push(3);
-
-    int sum = 0;
-    const auto count = inbox.drain([&sum](int val) { sum += val; });
-    REQUIRE(count == 3);
-    REQUIRE(sum == 6);
-    REQUIRE(inbox.empty());
-  }
-}
-
-// NOLINTEND(readability-function-cognitive-complexity)
-
-// =============================================================================
-// MpscInbox tests
-// =============================================================================
-
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-TEST_CASE("MpscInbox", "[inbox]")
-{
-  ev_loop::detail::MpscInbox<int> inbox;
-
-  SECTION("starts empty") { REQUIRE(inbox.empty()); }
-
-  SECTION("push and pop")
-  {
-    REQUIRE(inbox.push(kTestValue1));
-    REQUIRE(inbox.push(kTestValue2));
-    REQUIRE_FALSE(inbox.empty());
-
-    int value = 0;
-    REQUIRE(inbox.try_pop(value));
-    REQUIRE(value == kTestValue1);
-    REQUIRE(inbox.try_pop(value));
-    REQUIRE(value == kTestValue2);
-    REQUIRE(inbox.empty());
-    REQUIRE_FALSE(inbox.try_pop(value));
-  }
-
-  SECTION("drain")
-  {
-    inbox.push(1);
-    inbox.push(2);
-    inbox.push(3);
-
-    int sum = 0;
-    const auto count = inbox.drain([&sum](int val) { sum += val; });
-    REQUIRE(count == 3);
-    REQUIRE(sum == 6);
-    REQUIRE(inbox.empty());
-  }
-}
-
-// NOLINTEND(readability-function-cognitive-complexity)
-
-TEST_CASE("MpscInbox concurrent producers", "[inbox]")
-{
-  constexpr int kItemsPerThread = 1000;
-  constexpr int kNumThreads = 4;
-
-  ev_loop::detail::MpscInbox<int, 8192> inbox;
-  std::atomic<int> items_pushed{ 0 };
-
-  // Launch multiple producer threads
-  std::vector<std::thread> producers;
-  producers.reserve(kNumThreads);
-  for (int thread_id = 0; thread_id < kNumThreads; ++thread_id) {
-    producers.emplace_back([&inbox, &items_pushed, thread_id] {
-      for (int idx = 0; idx < kItemsPerThread; ++idx) {
-        while (!inbox.push((thread_id * kItemsPerThread) + idx)) { std::this_thread::yield(); }
-        items_pushed.fetch_add(1, std::memory_order_relaxed);
-      }
-    });
-  }
-
-  // Consumer on main thread
-  int items_popped = 0;
-  const int total_items = kNumThreads * kItemsPerThread;
-
-  while (items_popped < total_items) {
-    int value = 0;
-    if (inbox.try_pop(value)) {
-      ++items_popped;
-    } else {
-      std::this_thread::yield();
-    }
-  }
-
-  for (auto& thread : producers) { thread.join(); }
-
-  REQUIRE(items_popped == total_items);
-  REQUIRE(inbox.empty());
-}
-
-// =============================================================================
-// Queue type selection tests (compile-time SPSC vs MPSC)
-// =============================================================================
-
-namespace {
-// Test events for queue selection
-struct QueueTestEventA
-{
-};
-struct QueueTestEventB
-{
-};
-
-// Group1 receives A, emits B
-struct QueueTestGroup1Recv
-{
-  using receives = ev_loop::type_list<QueueTestEventA>;
-  using emits = ev_loop::type_list<QueueTestEventB>;
-  template<typename D> static void on_event(QueueTestEventA /*unused*/, D& /*unused*/) {}
-};
-
-// Group2 receives B, emits A
-struct QueueTestGroup2Recv
-{
-  using receives = ev_loop::type_list<QueueTestEventB>;
-  using emits = ev_loop::type_list<QueueTestEventA>;
-  template<typename D> static void on_event(QueueTestEventB /*unused*/, D& /*unused*/) {}
-};
-
-// Group3 receives nothing, emits B (same as Group1 - creates MPSC scenario for Group2)
-struct QueueTestGroup3Recv
-{
-  using receives = ev_loop::type_list<QueueTestEventA>;
-  using emits = ev_loop::type_list<QueueTestEventB>;
-  template<typename D> static void on_event(QueueTestEventA /*unused*/, D& /*unused*/) {}
-};
-
-using QueueTestGroup1 = ev_loop::SpinGroup<QueueTestGroup1Recv>;
-using QueueTestGroup2 = ev_loop::SpinGroup<QueueTestGroup2Recv>;
-using QueueTestGroup3 = ev_loop::SpinGroup<QueueTestGroup3Recv>;
-} // namespace
-
-TEST_CASE("Queue selection - SPSC for single producer", "[inbox]")
-{
-  // 2-group ping-pong: each event has exactly 1 producer
-  // Group1 emits B (only producer of B for Group2)
-  // Group2 emits A (only producer of A for Group1)
-
-  using namespace ev_loop::detail;
-
-  // EventA to Group1: only Group2 emits A → 1 producer → SPSC
-  static_assert(count_event_producers_v<QueueTestGroup1, QueueTestEventA, QueueTestGroup1, QueueTestGroup2> == 1);
-
-  // EventB to Group2: only Group1 emits B → 1 producer → SPSC
-  static_assert(count_event_producers_v<QueueTestGroup2, QueueTestEventB, QueueTestGroup1, QueueTestGroup2> == 1);
-
-  // Verify SPSC queue is selected
-  static_assert(std::is_same_v<select_queue_t<QueueTestEventA, 1>, SpscInbox<QueueTestEventA>>);
-  static_assert(std::is_same_v<select_queue_t<QueueTestEventB, 1>, SpscInbox<QueueTestEventB>>);
-
-  REQUIRE(true); // Static asserts passed
-}
-
-TEST_CASE("Queue selection - MPSC for multiple producers", "[inbox]")
-{
-  // 3-group setup: Group1 AND Group3 both emit B to Group2
-  // Group1 emits B, Group3 also emits B → 2 producers for Group2's B queue
-
-  using namespace ev_loop::detail;
-
-  // EventB to Group2: Group1 emits B, Group3 emits B → 2 producers → MPSC
-  static_assert(
-    count_event_producers_v<QueueTestGroup2, QueueTestEventB, QueueTestGroup1, QueueTestGroup2, QueueTestGroup3> == 2);
-
-  // EventA to Group1: only Group2 emits A → 1 producer → SPSC
-  static_assert(
-    count_event_producers_v<QueueTestGroup1, QueueTestEventA, QueueTestGroup1, QueueTestGroup2, QueueTestGroup3> == 1);
-
-  // Verify MPSC queue is selected for 2+ producers
-  static_assert(std::is_same_v<select_queue_t<QueueTestEventB, 2>, MpscInbox<QueueTestEventB>>);
-  static_assert(std::is_same_v<select_queue_t<QueueTestEventB, 3>, MpscInbox<QueueTestEventB>>);
-
-  REQUIRE(true); // Static asserts passed
-}
-
-// =============================================================================
 // GroupWorkSignal tests
 // =============================================================================
 
@@ -561,29 +293,6 @@ TEST_CASE("GroupWorkSignal", "[group_event_loop]")
   }
 }
 // NOLINTEND(readability-function-cognitive-complexity)
-
-// =============================================================================
-// Group event routing trait tests
-// =============================================================================
-
-TEST_CASE("Group handles event trait", "[group_event_loop]")
-{
-  using GroupA = ev_loop::SpinGroup<ReceiverA>;
-  using GroupB = ev_loop::WaitGroup<ReceiverB>;
-
-  STATIC_REQUIRE(ev_loop::detail::group_handles_event_v<GroupA, EventA>);
-  STATIC_REQUIRE_FALSE(ev_loop::detail::group_handles_event_v<GroupA, EventB>);
-
-  STATIC_REQUIRE(ev_loop::detail::group_handles_event_v<GroupB, EventB>);
-  STATIC_REQUIRE_FALSE(ev_loop::detail::group_handles_event_v<GroupB, EventA>);
-}
-
-TEST_CASE("Group all events trait", "[group_event_loop]")
-{
-  using GroupA = ev_loop::SpinGroup<ReceiverA>;
-  using Events = ev_loop::detail::group_all_events_t<GroupA>;
-  STATIC_REQUIRE(ev_loop::detail::contains_v<Events, EventA>);
-}
 
 // =============================================================================
 // Event routing tests
@@ -914,275 +623,6 @@ TEST_CASE("GroupEventLoop copy/move optimization - two groups with 3 receivers e
 }
 
 // =============================================================================
-// External Events tests
-// =============================================================================
-
-// External input definition - defines what events can be emitted
-struct PrimaryExternalInputs
-{
-  using emits = ev_loop::type_list<EventA, EventB>;
-};
-
-// Receiver that counts external events
-struct ExternalEventCounter
-{
-  using receives = ev_loop::type_list<EventA, EventB>;
-  using emits = ev_loop::type_list<>;
-
-  std::atomic<int> event_a_count{ 0 };
-  std::atomic<int> event_b_count{ 0 };
-
-  template<typename Dispatcher> void on_event(EventA event, Dispatcher& /*dispatcher*/)
-  {
-    event_a_count.fetch_add(event.value, std::memory_order_relaxed);
-  }
-
-  template<typename Dispatcher> void on_event(EventB event, Dispatcher& /*dispatcher*/)
-  {
-    event_b_count.fetch_add(event.value, std::memory_order_relaxed);
-  }
-};
-
-TEST_CASE("ExternalGroup - external threads can emit events", "[group_event_loop][external]")
-{
-  using Loop =
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalEventCounter>, ev_loop::ExternalGroup<PrimaryExternalInputs>>;
-
-  auto loop = Loop::setup().create_unique();
-
-  // Get external emitter handle
-  auto emitter = loop->get_external_emitter<PrimaryExternalInputs>();
-
-  // Emit events from current thread (simulating external thread)
-  REQUIRE(emitter.emit(EventA{ .value = kTestValue1 }));
-  REQUIRE(emitter.emit(EventB{ .value = kTestValue2 }));
-
-  // Poll external events and dispatch to receivers
-  while (loop->poll_external<PrimaryExternalInputs>()) {}
-  while (loop->poll_group<0>()) {}
-
-  REQUIRE(loop->get<ExternalEventCounter>().event_a_count.load() == kTestValue1);
-  REQUIRE(loop->get<ExternalEventCounter>().event_b_count.load() == kTestValue2);
-}
-
-TEST_CASE("ExternalGroup - emitter can be copied and used from multiple threads", "[group_event_loop][external]")
-{
-  using Loop =
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalEventCounter>, ev_loop::ExternalGroup<PrimaryExternalInputs>>;
-
-  auto loop = Loop::setup().create_unique();
-  auto emitter = loop->get_external_emitter<PrimaryExternalInputs>();
-
-  constexpr int kEventsPerThread = 100;
-  constexpr int kNumThreads = 4;
-
-  // Launch threads that emit events concurrently
-  std::vector<std::thread> threads;
-  threads.reserve(kNumThreads);
-  for (int i = 0; i < kNumThreads; ++i) {
-    threads.emplace_back([emitter_copy = emitter]() {
-      for (int j = 0; j < kEventsPerThread; ++j) { emitter_copy.emit(EventA{ .value = 1 }); }
-    });
-  }
-
-  // Wait for all threads to finish
-  for (auto& thread : threads) { thread.join(); }
-
-  // Poll all external events
-  while (loop->poll_external<PrimaryExternalInputs>()) {}
-  while (loop->poll_group<0>()) {}
-
-  REQUIRE(loop->get<ExternalEventCounter>().event_a_count.load() == kEventsPerThread * kNumThreads);
-}
-
-TEST_CASE("ExternalGroup - emitter handle stays valid after EventLoop destruction", "[group_event_loop][external]")
-{
-  using Loop =
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalEventCounter>, ev_loop::ExternalGroup<PrimaryExternalInputs>>;
-
-  ev_loop::ExternalEmitter<EventA, EventB> emitter;
-
-  {
-    auto loop = Loop::setup().create_unique();
-    emitter = loop->get_external_emitter<PrimaryExternalInputs>();
-
-    // Emitter works while loop exists
-    REQUIRE(emitter.emit(EventA{ .value = kTestValue1 }));
-    REQUIRE(static_cast<bool>(emitter));
-  }
-  // Loop is destroyed here
-
-  // Emitter is still valid (shared_ptr to inbox is alive)
-  REQUIRE(static_cast<bool>(emitter));
-
-  // Events can still be pushed (they just won't be processed)
-  REQUIRE(emitter.emit(EventA{ .value = kTestValue2 }));
-}
-
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-TEST_CASE("ExternalEmitter", "[group_event_loop][external]")
-{
-  SECTION("default constructed emitter returns false on emit")
-  {
-    const ev_loop::ExternalEmitter<EventA, EventB> emitter;
-
-    REQUIRE_FALSE(static_cast<bool>(emitter));
-    REQUIRE_FALSE(emitter.emit(EventA{ .value = kTestValue1 }));
-    REQUIRE_FALSE(emitter.emit(EventB{ .value = kTestValue2 }));
-  }
-
-  SECTION("emit returns false when queue is full")
-  {
-    using Loop =
-      ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalEventCounter>, ev_loop::ExternalGroup<PrimaryExternalInputs>>;
-
-    auto loop = Loop::setup().create_unique();
-    auto emitter = loop->get_external_emitter<PrimaryExternalInputs>();
-
-    // Fill the queue (default capacity is 4096)
-    constexpr int kQueueCapacity = 4096;
-    for (int i = 0; i < kQueueCapacity; ++i) { REQUIRE(emitter.emit(EventA{ .value = i })); }
-
-    // Queue is now full, emit should return false
-    REQUIRE_FALSE(emitter.emit(EventA{ .value = kQueueCapacity }));
-
-    // After draining some events, emit should work again
-    loop->poll_all_external();
-    while (loop->poll_group<0>()) {}
-
-    REQUIRE(emitter.emit(EventA{ .value = kQueueCapacity + 1 }));
-  }
-}
-// NOLINTEND(readability-function-cognitive-complexity)
-
-// External input definitions for multi-ExternalGroup tests
-struct FirstExternalInputs
-{
-  using emits = ev_loop::type_list<EventA, EventB>;
-};
-
-struct SecondExternalInputs
-{
-  using emits = ev_loop::type_list<EventC>;
-};
-
-// Receiver for multi-external tests
-struct MultiExternalReceiver
-{
-  using receives = ev_loop::type_list<EventA, EventB, EventC>;
-  using emits = ev_loop::type_list<>;
-
-  std::atomic<int> event_a_count{ 0 };
-  std::atomic<int> event_b_count{ 0 };
-  std::atomic<int> event_c_count{ 0 };
-
-  template<typename Dispatcher> void on_event(EventA event, Dispatcher& /*dispatcher*/)
-  {
-    event_a_count.fetch_add(event.value, std::memory_order_relaxed);
-  }
-
-  template<typename Dispatcher> void on_event(EventB event, Dispatcher& /*dispatcher*/)
-  {
-    event_b_count.fetch_add(event.value, std::memory_order_relaxed);
-  }
-
-  template<typename Dispatcher> void on_event(EventC event, Dispatcher& /*dispatcher*/)
-  {
-    event_c_count.fetch_add(event.value, std::memory_order_relaxed);
-  }
-};
-
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-TEST_CASE("Multiple ExternalGroups - type-based getter", "[group_event_loop][external]")
-{
-  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<MultiExternalReceiver>,
-    ev_loop::ExternalGroup<FirstExternalInputs>,
-    ev_loop::ExternalGroup<SecondExternalInputs>>;
-
-  auto loop = Loop::setup().create_unique();
-
-  // Get emitters by type
-  auto emitter1 = loop->get_external_emitter<FirstExternalInputs>();
-  auto emitter2 = loop->get_external_emitter<SecondExternalInputs>();
-
-  // Emit events from each emitter
-  REQUIRE(emitter1.emit(EventA{ .value = kTestValue1 }));
-  REQUIRE(emitter1.emit(EventB{ .value = kTestValue2 }));
-  REQUIRE(emitter2.emit(EventC{ .value = kTestValue3 }));
-
-  // Poll all external groups
-  while (loop->poll_all_external()) {}
-  while (loop->poll_group<0>()) {}
-
-  REQUIRE(loop->get<MultiExternalReceiver>().event_a_count.load() == kTestValue1);
-  REQUIRE(loop->get<MultiExternalReceiver>().event_b_count.load() == kTestValue2);
-  REQUIRE(loop->get<MultiExternalReceiver>().event_c_count.load() == kTestValue3);
-}
-
-TEST_CASE("Multiple ExternalGroups - poll by type", "[group_event_loop][external]")
-{
-  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<MultiExternalReceiver>,
-    ev_loop::ExternalGroup<FirstExternalInputs>,
-    ev_loop::ExternalGroup<SecondExternalInputs>>;
-
-  auto loop = Loop::setup().create_unique();
-
-  auto emitter1 = loop->get_external_emitter<FirstExternalInputs>();
-  auto emitter2 = loop->get_external_emitter<SecondExternalInputs>();
-
-  // Emit events
-  REQUIRE(emitter1.emit(EventA{ .value = kTestValue1 }));
-  REQUIRE(emitter2.emit(EventC{ .value = kTestValue3 }));
-
-  // Poll only the first ExternalGroup
-  while (loop->poll_external<FirstExternalInputs>()) {}
-  while (loop->poll_group<0>()) {}
-
-  // Only EventA should be processed
-  REQUIRE(loop->get<MultiExternalReceiver>().event_a_count.load() == kTestValue1);
-  REQUIRE(loop->get<MultiExternalReceiver>().event_c_count.load() == 0);
-
-  // Now poll the second ExternalGroup
-  while (loop->poll_external<SecondExternalInputs>()) {}
-  while (loop->poll_group<0>()) {}
-
-  REQUIRE(loop->get<MultiExternalReceiver>().event_c_count.load() == kTestValue3);
-}
-
-TEST_CASE("Multiple ExternalGroups - concurrent threads per group", "[group_event_loop][external]")
-{
-  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<MultiExternalReceiver>,
-    ev_loop::ExternalGroup<FirstExternalInputs>,
-    ev_loop::ExternalGroup<SecondExternalInputs>>;
-
-  auto loop = Loop::setup().create_unique();
-
-  auto emitter1 = loop->get_external_emitter<FirstExternalInputs>();
-  auto emitter2 = loop->get_external_emitter<SecondExternalInputs>();
-
-  constexpr int kEventsPerThread = 100;
-
-  // Launch threads for each emitter type
-  std::thread thread1([emitter1]() {
-    for (int i = 0; i < kEventsPerThread; ++i) { emitter1.emit(EventA{ .value = 1 }); }
-  });
-
-  std::thread thread2([emitter2]() {
-    for (int i = 0; i < kEventsPerThread; ++i) { emitter2.emit(EventC{ .value = 1 }); }
-  });
-
-  thread1.join();
-  thread2.join();
-
-  // Poll all external events
-  while (loop->poll_all_external()) {}
-  while (loop->poll_group<0>()) {}
-
-  REQUIRE(loop->get<MultiExternalReceiver>().event_a_count.load() == kEventsPerThread);
-  REQUIRE(loop->get<MultiExternalReceiver>().event_c_count.load() == kEventsPerThread);
-}
-
-// =============================================================================
 // run<I>() tests - run specific group on current thread
 // =============================================================================
 
@@ -1288,146 +728,6 @@ TEST_CASE("GroupEventLoop join() waits for all threads", "[group_event_loop]")
 }
 
 // =============================================================================
-// Setup builder tests
-// =============================================================================
-
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-TEST_CASE("Setup builder", "[group_event_loop]")
-{
-  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
-
-  SECTION("can create multiple independent loops")
-  {
-    auto loop1 = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
-    auto loop2 = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
-
-    while (loop1->poll_group<0>()) {}
-    while (loop2->poll_group<0>()) {}
-
-    REQUIRE(loop1->get<ReceiverA>().count.load() == kTestValue1);
-    REQUIRE(loop2->get<ReceiverA>().count.load() == kTestValue1);
-  }
-
-  SECTION("prime chaining accumulates events")
-  {
-    auto loop =
-      Loop::setup().prime(EventA{ .value = 1 }).prime(EventA{ .value = 2 }).prime(EventA{ .value = 3 }).create_unique();
-
-    while (loop->poll_group<0>()) {}
-
-    REQUIRE(loop->get<ReceiverA>().count.load() == 6); // 1 + 2 + 3
-  }
-}
-// NOLINTEND(readability-function-cognitive-complexity)
-
-// =============================================================================
-// Hybrid strategy tests
-// =============================================================================
-
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-TEST_CASE("Hybrid strategy", "[group_event_loop]")
-{
-  SECTION("HybridGroup processes events")
-  {
-    using Loop = ev_loop::GroupEventLoop<ev_loop::ThreadGroup<ev_loop::Hybrid, ReceiverA>>;
-
-    auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
-    loop->start();
-
-    REQUIRE(wait_for([&] { return loop->get<ReceiverA>().count.load() == kTestValue1; }));
-    loop->stop();
-  }
-
-  SECTION("enters wait mode after spin exhaustion")
-  {
-    // This test verifies the hybrid wait path is exercised.
-    // Use HybridWith<1> so it enters wait mode after just 1 empty poll.
-    struct ExtEvents
-    {
-      using emits = ev_loop::type_list<EventA>;
-    };
-    constexpr std::size_t kImmediateWaitSpinCount = 1;
-    using FastHybrid = ev_loop::HybridWith<kImmediateWaitSpinCount>;
-    using Loop =
-      ev_loop::GroupEventLoop<ev_loop::ThreadGroup<FastHybrid, ReceiverA>, ev_loop::ExternalGroup<ExtEvents>>;
-
-    auto loop = Loop::setup().create_unique();
-    auto emitter = loop->get_external_emitter<ExtEvents>();
-    loop->start();
-
-    // Send event - the loop will be in wait mode almost immediately (after 1 empty poll)
-    while (!emitter.emit(EventA{ .value = kTestValue1 })) { std::this_thread::yield(); }
-
-    // Poll external events on main thread, which routes to receiver and wakes the waiting thread
-    while (!loop->poll_external<ExtEvents>()) { std::this_thread::yield(); }
-
-    REQUIRE(wait_for([&] { return loop->get<ReceiverA>().count.load() == kTestValue1; }));
-    loop->stop();
-  }
-}
-// NOLINTEND(readability-function-cognitive-complexity)
-
-// =============================================================================
-// ExternalInbox direct tests
-// =============================================================================
-
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-TEST_CASE("ExternalInbox", "[external]")
-{
-  SECTION("push and try_pop")
-  {
-    ev_loop::ExternalInbox<EventA, EventB> inbox;
-
-    REQUIRE(inbox.empty<EventA>());
-    REQUIRE(inbox.empty<EventB>());
-
-    REQUIRE(inbox.push(EventA{ .value = kTestValue1 }));
-    REQUIRE(inbox.push(EventB{ .value = kTestValue2 }));
-
-    REQUIRE_FALSE(inbox.empty<EventA>());
-    REQUIRE_FALSE(inbox.empty<EventB>());
-
-    EventA event_a{};
-    EventB event_b{};
-
-    REQUIRE(inbox.try_pop(event_a));
-    REQUIRE(event_a.value == kTestValue1);
-
-    REQUIRE(inbox.try_pop(event_b));
-    REQUIRE(event_b.value == kTestValue2);
-
-    REQUIRE(inbox.empty<EventA>());
-    REQUIRE(inbox.empty<EventB>());
-  }
-
-  SECTION("concurrent producers")
-  {
-    ev_loop::ExternalInbox<EventA> inbox;
-
-    constexpr int kEventsPerThread = 500;
-    constexpr int kNumThreads = 4;
-
-    std::vector<std::thread> producers;
-    producers.reserve(kNumThreads);
-
-    for (int i = 0; i < kNumThreads; ++i) {
-      producers.emplace_back([&inbox]() {
-        for (int j = 0; j < kEventsPerThread; ++j) { inbox.push(EventA{ .value = 1 }); }
-      });
-    }
-
-    for (auto& producer : producers) { producer.join(); }
-
-    int count = 0;
-    EventA event{};
-    while (inbox.try_pop(event)) { count += event.value; }
-
-    REQUIRE(count == kEventsPerThread * kNumThreads);
-  }
-}
-// NOLINTEND(readability-function-cognitive-complexity)
-
-// =============================================================================
 // poll_group return value tests
 // =============================================================================
 
@@ -1500,3 +800,5 @@ TEST_CASE("const access via deducing this", "[group_event_loop]")
   }
 }
 // NOLINTEND(readability-function-cognitive-complexity)
+
+} // namespace

@@ -6,13 +6,13 @@
 struct RegisteredReceiver
 {
   using receives = ev_loop::type_list<int>;
-  void on(int) {}
+  void on(int /*unused*/) {}
 };
 
 struct UnregisteredReceiver
 {
   using receives = ev_loop::type_list<int>;
-  void on(int) {}
+  void on(int /*unused*/) {}
 };
 
 using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<RegisteredReceiver>>;

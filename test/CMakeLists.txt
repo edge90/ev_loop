@@ -22,7 +22,11 @@ include(${Catch2_SOURCE_DIR}/extras/Catch.cmake)
 # Unit tests (runtime only)
 add_executable(tests)
 target_sources(tests PRIVATE
+    test_external.cpp
     test_group_event_loop.cpp
+    test_inbox.cpp
+    test_setup.cpp
+    test_strategy.cpp
     test_utils.cpp
 )
 target_link_libraries(tests
@@ -65,8 +69,12 @@ endfunction()
 
 # Constexpr test sources
 set(CONSTEXPR_TEST_SOURCES
-    test_type_list_constexpr.cpp
+    test_external_constexpr.cpp
     test_group_event_loop_constexpr.cpp
+    test_inbox_constexpr.cpp
+    test_setup_constexpr.cpp
+    test_strategy_constexpr.cpp
+    test_type_list_constexpr.cpp
 )
 
 # Constexpr tests - STATIC_REQUIRE runs as compile-time static_assert
@@ -76,65 +84,32 @@ add_test_executable(constexpr_tests "constexpr" ${CONSTEXPR_TEST_SOURCES})
 add_test_executable(relaxed_tests "relaxed" ${CONSTEXPR_TEST_SOURCES})
 target_compile_definitions(relaxed_tests PRIVATE CATCH_CONFIG_RUNTIME_STATIC_REQUIRE)
 
-# Compile-failure test: verifies that tag_type_t rejects N >= uint32_t max
-add_executable(test_tag_type_overflow_fail EXCLUDE_FROM_ALL test_tag_type_overflow_fail.cpp)
-target_link_libraries(test_tag_type_overflow_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME tag_type_overflow_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_tag_type_overflow_fail)
-set_tests_properties(tag_type_overflow_should_fail PROPERTIES WILL_FAIL TRUE)
+# =============================================================================
+# Compile-failure tests (grouped by concept)
+# =============================================================================
 
-# Compile-failure test: verifies that duplicate ExternalGroup types are rejected
-add_executable(test_duplicate_external_group_fail EXCLUDE_FROM_ALL test_duplicate_external_group_fail.cpp)
-target_link_libraries(test_duplicate_external_group_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME duplicate_external_group_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_duplicate_external_group_fail)
-set_tests_properties(duplicate_external_group_should_fail PROPERTIES WILL_FAIL TRUE)
+# Helper function for compile-failure tests
+function(add_compile_fail_test TARGET_NAME)
+  add_executable(${TARGET_NAME} EXCLUDE_FROM_ALL ${TARGET_NAME}.cpp)
+  target_link_libraries(${TARGET_NAME} PRIVATE ev_loop::ev_loop)
+  add_test(NAME ${TARGET_NAME}
+           COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${TARGET_NAME})
+  set_tests_properties(${TARGET_NAME} PROPERTIES WILL_FAIL TRUE)
+endfunction()
 
-# Compile-failure test: verifies that GroupEventLoop requires at least one group
-add_executable(test_no_groups_fail EXCLUDE_FROM_ALL test_no_groups_fail.cpp)
-target_link_libraries(test_no_groups_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME no_groups_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_no_groups_fail)
-set_tests_properties(no_groups_should_fail PROPERTIES WILL_FAIL TRUE)
+# external
+add_compile_fail_test(test_external_duplicate_fail)
+add_compile_fail_test(test_external_no_emits_fail)
+add_compile_fail_test(test_external_not_found_fail)
 
-# Compile-failure test: verifies that GroupEventLoop requires at least one ThreadGroup
-add_executable(test_only_external_group_fail EXCLUDE_FROM_ALL test_only_external_group_fail.cpp)
-target_link_libraries(test_only_external_group_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME only_external_group_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_only_external_group_fail)
-set_tests_properties(only_external_group_should_fail PROPERTIES WILL_FAIL TRUE)
+# group_event_loop
+add_compile_fail_test(test_group_event_loop_invalid_type_fail)
+add_compile_fail_test(test_group_event_loop_no_groups_fail)
+add_compile_fail_test(test_group_event_loop_only_external_fail)
+add_compile_fail_test(test_group_event_loop_receiver_not_found_fail)
 
-# Compile-failure test: verifies that GroupEventLoop rejects invalid group types
-add_executable(test_invalid_group_type_fail EXCLUDE_FROM_ALL test_invalid_group_type_fail.cpp)
-target_link_libraries(test_invalid_group_type_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME invalid_group_type_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_invalid_group_type_fail)
-set_tests_properties(invalid_group_type_should_fail PROPERTIES WILL_FAIL TRUE)
+# inbox
+add_compile_fail_test(test_inbox_capacity_fail)
 
-# Compile-failure test: verifies that get_external_emitter rejects unknown ExternalGroup types
-add_executable(test_external_group_not_found_fail EXCLUDE_FROM_ALL test_external_group_not_found_fail.cpp)
-target_link_libraries(test_external_group_not_found_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME external_group_not_found_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_external_group_not_found_fail)
-set_tests_properties(external_group_not_found_should_fail PROPERTIES WILL_FAIL TRUE)
-
-# Compile-failure test: verifies that get<Receiver>() rejects unknown receivers
-add_executable(test_receiver_not_found_fail EXCLUDE_FROM_ALL test_receiver_not_found_fail.cpp)
-target_link_libraries(test_receiver_not_found_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME receiver_not_found_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_receiver_not_found_fail)
-set_tests_properties(receiver_not_found_should_fail PROPERTIES WILL_FAIL TRUE)
-
-# Compile-failure test: verifies that InboxBase requires power-of-2 capacity
-add_executable(test_inbox_capacity_fail EXCLUDE_FROM_ALL test_inbox_capacity_fail.cpp)
-target_link_libraries(test_inbox_capacity_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME inbox_capacity_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_inbox_capacity_fail)
-set_tests_properties(inbox_capacity_should_fail PROPERTIES WILL_FAIL TRUE)
-
-# Compile-failure test: verifies that ExternalGroup<T> requires T to define emits
-add_executable(test_external_group_no_emits_fail EXCLUDE_FROM_ALL test_external_group_no_emits_fail.cpp)
-target_link_libraries(test_external_group_no_emits_fail PRIVATE ev_loop::ev_loop)
-add_test(NAME external_group_no_emits_should_fail
-         COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target test_external_group_no_emits_fail)
-set_tests_properties(external_group_no_emits_should_fail PROPERTIES WILL_FAIL TRUE)
+# type_list
+add_compile_fail_test(test_type_list_tag_overflow_fail)
