@@ -134,7 +134,8 @@ void benchmark_two_groups()
   // SpinGroup x2
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverC>, ev_loop::SpinGroup<ReceiverD>>;
-    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -151,7 +152,8 @@ void benchmark_two_groups()
   // WaitGroup x2
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::WaitGroup<ReceiverC>, ev_loop::WaitGroup<ReceiverD>>;
-    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -175,7 +177,8 @@ void benchmark_main_to_background()
   {
     using Loop =
       ev_loop::GroupEventLoop<ev_loop::SpinGroup<MainThreadReceiver>, ev_loop::SpinGroup<BackgroundReceiver>>;
-    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -193,7 +196,8 @@ void benchmark_main_to_background()
   {
     using Loop =
       ev_loop::GroupEventLoop<ev_loop::WaitGroup<MainThreadReceiver>, ev_loop::WaitGroup<BackgroundReceiver>>;
-    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -217,7 +221,8 @@ void benchmark_background_to_main()
   {
     using Loop =
       ev_loop::GroupEventLoop<ev_loop::SpinGroup<MainPongReceiver>, ev_loop::SpinGroup<BackgroundPingReceiver>>;
-    auto loop = Loop::setup().prime(Pong{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Pong{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -236,7 +241,8 @@ void benchmark_background_to_main()
   {
     using Loop =
       ev_loop::GroupEventLoop<ev_loop::WaitGroup<MainPongReceiver>, ev_loop::WaitGroup<BackgroundPingReceiver>>;
-    auto loop = Loop::setup().prime(Pong{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Pong{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 

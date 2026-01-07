@@ -1265,7 +1265,7 @@ public:
     // Create EventLoop on stack (relies on NRVO)
     [[nodiscard]] auto create() const& -> GroupEventLoop
     {
-      GroupEventLoop loop;
+      GroupEventLoop loop{ typename GroupEventLoop::ConstructToken{} };
       std::apply([&loop](const auto&... events) { (loop.prime_event(events), ...); }, events_);
       return loop;
     }
@@ -1273,7 +1273,7 @@ public:
     // Create EventLoop on stack (moves events - rvalue overload)
     [[nodiscard]] auto create() && -> GroupEventLoop
     {
-      GroupEventLoop loop;
+      GroupEventLoop loop{ typename GroupEventLoop::ConstructToken{} };
       std::apply([&loop](auto&&... events) { (loop.prime_event(std::forward<decltype(events)>(events)), ...); },
         std::move(events_));
       return loop;
@@ -1296,21 +1296,18 @@ public:
       return loop;
     }
 
-    // Create on heap (returns unique_ptr, not started)
+    // Create on heap (returns unique_ptr)
     [[nodiscard]] auto create_unique() && -> std::unique_ptr<GroupEventLoop>
     {
-      auto ptr = std::unique_ptr<GroupEventLoop>(new GroupEventLoop());
-      std::apply([&ptr](auto&&... events) { (ptr->prime_event(std::forward<decltype(events)>(events)), ...); },
-        std::move(events_));
-      return ptr;
+      return std::move(*this).create(
+        [] { return std::make_unique<GroupEventLoop>(typename GroupEventLoop::ConstructToken{}); });
     }
 
-    // Create on heap and start threads (returns unique_ptr)
-    [[nodiscard]] auto start_unique() && -> std::unique_ptr<GroupEventLoop>
+    // Create on heap (returns shared_ptr)
+    [[nodiscard]] auto create_shared() && -> std::shared_ptr<GroupEventLoop>
     {
-      auto ptr = std::move(*this).create_unique();
-      ptr->start();
-      return ptr;
+      return std::move(*this).create(
+        [] { return std::make_shared<GroupEventLoop>(typename GroupEventLoop::ConstructToken{}); });
     }
   };
 
@@ -1325,13 +1322,23 @@ public:
   GroupEventLoop& operator=(GroupEventLoop&&) = delete;
 
 private:
-  // Private default constructor - use setup().prime().create()
-  GroupEventLoop() = default;
+  // Passkey idiom: public constructor requires a token only friends can create
+  class ConstructToken
+  {
+    template<typename...> friend class Setup;
+    constexpr ConstructToken() = default;
+  };
+
   template<typename...> friend class Setup;
 
+  // Private default constructor
+  GroupEventLoop() = default;
+
 public:
+  // Public constructor guarded by private token - enables std::make_unique/make_shared
+  explicit GroupEventLoop(ConstructToken /*unused*/) {}
+
   // Start all groups on their own threads (returns immediately)
-  // Only useful if you used build() instead of start()
   void start() { start_threads(); }
 
   // Run group I on the current thread, start others on their own threads

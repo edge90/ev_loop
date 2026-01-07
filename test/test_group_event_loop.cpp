@@ -104,6 +104,7 @@ struct CounterReceiver
 // Type trait tests
 // =============================================================================
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 TEST_CASE("ThreadGroup type traits", "[group_event_loop]")
 {
   using Group = ev_loop::ThreadGroup<ev_loop::Spin, ReceiverA, ReceiverB>;
@@ -256,12 +257,15 @@ TEST_CASE("GroupEventLoop start and stop", "[group_event_loop]")
   SECTION("Builder::start() returns running loop")
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
-    auto loop = Loop::setup().start_unique();
+    auto loop = Loop::setup().create_unique();
+    loop->start();
     REQUIRE(loop->is_running());
     loop->stop();
     REQUIRE_FALSE(loop->is_running());
   }
 }
+
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // =============================================================================
 // GroupStorage tests
@@ -295,60 +299,86 @@ TEST_CASE("GroupStorage access by index", "[group_event_loop]")
 // SpscInbox tests
 // =============================================================================
 
-TEST_CASE("SpscInbox push and pop", "[inbox]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("SpscInbox", "[inbox]")
 {
   ev_loop::detail::SpscInbox<int> inbox;
-  REQUIRE(inbox.empty());
 
-  REQUIRE(inbox.push(kTestValue1));
-  REQUIRE(inbox.push(kTestValue2));
-  REQUIRE_FALSE(inbox.empty());
-  REQUIRE(inbox.size() == 2);
+  SECTION("starts empty") { REQUIRE(inbox.empty()); }
 
-  int value = 0;
-  REQUIRE(inbox.try_pop(value));
-  REQUIRE(value == kTestValue1);
-  REQUIRE(inbox.try_pop(value));
-  REQUIRE(value == kTestValue2);
-  REQUIRE(inbox.empty());
-  REQUIRE_FALSE(inbox.try_pop(value));
+  SECTION("push and pop")
+  {
+    REQUIRE(inbox.push(kTestValue1));
+    REQUIRE(inbox.push(kTestValue2));
+    REQUIRE_FALSE(inbox.empty());
+    REQUIRE(inbox.size() == 2);
+
+    int value = 0;
+    REQUIRE(inbox.try_pop(value));
+    REQUIRE(value == kTestValue1);
+    REQUIRE(inbox.try_pop(value));
+    REQUIRE(value == kTestValue2);
+    REQUIRE(inbox.empty());
+    REQUIRE_FALSE(inbox.try_pop(value));
+  }
+
+  SECTION("drain")
+  {
+    inbox.push(1);
+    inbox.push(2);
+    inbox.push(3);
+
+    int sum = 0;
+    const auto count = inbox.drain([&sum](int val) { sum += val; });
+    REQUIRE(count == 3);
+    REQUIRE(sum == 6);
+    REQUIRE(inbox.empty());
+  }
 }
 
-TEST_CASE("SpscInbox drain", "[inbox]")
-{
-  ev_loop::detail::SpscInbox<int> inbox;
-  inbox.push(1);
-  inbox.push(2);
-  inbox.push(3);
-
-  int sum = 0;
-  const auto count = inbox.drain([&sum](int val) { sum += val; });
-  REQUIRE(count == 3);
-  REQUIRE(sum == 6);
-  REQUIRE(inbox.empty());
-}
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // =============================================================================
 // MpscInbox tests
 // =============================================================================
 
-TEST_CASE("MpscInbox push and pop", "[inbox]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("MpscInbox", "[inbox]")
 {
   ev_loop::detail::MpscInbox<int> inbox;
-  REQUIRE(inbox.empty());
 
-  REQUIRE(inbox.push(kTestValue1));
-  REQUIRE(inbox.push(kTestValue2));
-  REQUIRE_FALSE(inbox.empty());
+  SECTION("starts empty") { REQUIRE(inbox.empty()); }
 
-  int value = 0;
-  REQUIRE(inbox.try_pop(value));
-  REQUIRE(value == kTestValue1);
-  REQUIRE(inbox.try_pop(value));
-  REQUIRE(value == kTestValue2);
-  REQUIRE(inbox.empty());
-  REQUIRE_FALSE(inbox.try_pop(value));
+  SECTION("push and pop")
+  {
+    REQUIRE(inbox.push(kTestValue1));
+    REQUIRE(inbox.push(kTestValue2));
+    REQUIRE_FALSE(inbox.empty());
+
+    int value = 0;
+    REQUIRE(inbox.try_pop(value));
+    REQUIRE(value == kTestValue1);
+    REQUIRE(inbox.try_pop(value));
+    REQUIRE(value == kTestValue2);
+    REQUIRE(inbox.empty());
+    REQUIRE_FALSE(inbox.try_pop(value));
+  }
+
+  SECTION("drain")
+  {
+    inbox.push(1);
+    inbox.push(2);
+    inbox.push(3);
+
+    int sum = 0;
+    const auto count = inbox.drain([&sum](int val) { sum += val; });
+    REQUIRE(count == 3);
+    REQUIRE(sum == 6);
+    REQUIRE(inbox.empty());
+  }
 }
+
+// NOLINTEND(readability-function-cognitive-complexity)
 
 TEST_CASE("MpscInbox concurrent producers", "[inbox]")
 {
@@ -386,20 +416,6 @@ TEST_CASE("MpscInbox concurrent producers", "[inbox]")
   for (auto& thread : producers) { thread.join(); }
 
   REQUIRE(items_popped == total_items);
-  REQUIRE(inbox.empty());
-}
-
-TEST_CASE("MpscInbox drain", "[inbox]")
-{
-  ev_loop::detail::MpscInbox<int> inbox;
-  inbox.push(1);
-  inbox.push(2);
-  inbox.push(3);
-
-  int sum = 0;
-  const auto count = inbox.drain([&sum](int val) { sum += val; });
-  REQUIRE(count == 3);
-  REQUIRE(sum == 6);
   REQUIRE(inbox.empty());
 }
 
@@ -492,46 +508,46 @@ TEST_CASE("Queue selection - MPSC for multiple producers", "[inbox]")
 // GroupWorkSignal tests
 // =============================================================================
 
-TEST_CASE("GroupWorkSignal initial state", "[group_event_loop]")
-{
-  const ev_loop::detail::GroupWorkSignal signal;
-  REQUIRE_FALSE(signal.is_stopped());
-}
-
-TEST_CASE("GroupWorkSignal notify and consume", "[group_event_loop]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("GroupWorkSignal", "[group_event_loop]")
 {
   ev_loop::detail::GroupWorkSignal signal;
-  signal.notify_work_available();
-  REQUIRE(signal.try_consume());
+
+  SECTION("initial state is not stopped") { REQUIRE_FALSE(signal.is_stopped()); }
+
+  SECTION("notify and consume")
+  {
+    signal.notify_work_available();
+    REQUIRE(signal.try_consume());
+  }
+
+  SECTION("stop wakes waiters")
+  {
+    std::atomic<bool> woke_up{ false };
+
+    std::thread waiter([&] {
+      const auto sig = signal.get_signal();
+      (void)signal.wait_for_work(sig);
+      woke_up.store(true);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
+    signal.stop();
+    waiter.join();
+
+    REQUIRE(woke_up.load());
+    REQUIRE(signal.is_stopped());
+  }
+
+  SECTION("reset clears stopped state")
+  {
+    signal.stop();
+    REQUIRE(signal.is_stopped());
+    signal.reset();
+    REQUIRE_FALSE(signal.is_stopped());
+  }
 }
-
-TEST_CASE("GroupWorkSignal stop wakes waiters", "[group_event_loop]")
-{
-  ev_loop::detail::GroupWorkSignal signal;
-  std::atomic<bool> woke_up{ false };
-
-  std::thread waiter([&] {
-    const auto sig = signal.get_signal();
-    (void)signal.wait_for_work(sig);
-    woke_up.store(true);
-  });
-
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
-  signal.stop();
-  waiter.join();
-
-  REQUIRE(woke_up.load());
-  REQUIRE(signal.is_stopped());
-}
-
-TEST_CASE("GroupWorkSignal reset", "[group_event_loop]")
-{
-  ev_loop::detail::GroupWorkSignal signal;
-  signal.stop();
-  REQUIRE(signal.is_stopped());
-  signal.reset();
-  REQUIRE_FALSE(signal.is_stopped());
-}
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // =============================================================================
 // Group event routing trait tests
@@ -565,7 +581,8 @@ TEST_CASE("GroupEventLoop prime routes to receiver", "[group_event_loop]")
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<CounterReceiver>>;
 
   // Prime event then start
-  auto loop = Loop::setup().prime(EventA{ .value = kTestValue4 }).start_unique();
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue4 }).create_unique();
+  loop->start();
 
   // Give time for event to be processed
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
@@ -584,7 +601,8 @@ TEST_CASE("GroupEventLoop multiple primed events", "[group_event_loop]")
                 .prime(EventA{ .value = kTestValue1 })
                 .prime(EventA{ .value = kTestValue2 })
                 .prime(EventA{ .value = kTestValue3 })
-                .start_unique();
+                .create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
@@ -599,7 +617,8 @@ TEST_CASE("GroupEventLoop events route to correct group", "[group_event_loop]")
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>, ev_loop::SpinGroup<ReceiverB>>;
 
   // EventA should go to ReceiverA, EventB should go to ReceiverB
-  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).prime(EventB{ .value = kTestValue2 }).start_unique();
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).prime(EventB{ .value = kTestValue2 }).create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
@@ -630,7 +649,8 @@ TEST_CASE("GroupEventLoop inter-group emission", "[group_event_loop]")
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<EmitterReceiver>, ev_loop::SpinGroup<ReceiverB>>;
 
   // Prime EventA to EmitterReceiver, which will emit EventB to ReceiverB
-  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).start_unique();
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
@@ -661,7 +681,8 @@ TEST_CASE("GroupEventLoop intra-group emission", "[group_event_loop]")
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<SameGroupEmitter>>;
 
   // Prime EventA with value 3, should trigger chain: 3 -> 2 -> 1
-  auto loop = Loop::setup().prime(EventA{ .value = 3 }).start_unique();
+  auto loop = Loop::setup().prime(EventA{ .value = 3 }).create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
@@ -692,7 +713,8 @@ TEST_CASE("GroupEventLoop intra-group routing between different receivers", "[gr
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<IntraGroupProducer, ReceiverB>>;
 
   // Prime EventA to Producer, which emits EventB to ReceiverB (same group)
-  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).start_unique();
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
@@ -723,7 +745,8 @@ TEST_CASE("GroupEventLoop broadcasts to all groups handling event", "[group_even
     GroupEventLoop<ev_loop::SpinGroup<EmitterReceiver>, ev_loop::SpinGroup<ReceiverB>, ev_loop::SpinGroup<ReceiverB2>>;
 
   // Prime EventA -> EmitterReceiver emits EventB -> should go to both group 1 and group 2
-  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).start_unique();
+  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
 
@@ -803,7 +826,8 @@ TEST_CASE("GroupEventLoop copy/move optimization - single group with 3 receivers
   auto counter = std::make_shared<TrackingCounter>();
 
   // Prime and start
-  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).start_unique();
+  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
   loop->stop();
@@ -834,7 +858,8 @@ TEST_CASE("GroupEventLoop copy/move optimization - two groups with 1 receiver ea
 
   auto counter = std::make_shared<TrackingCounter>();
 
-  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).start_unique();
+  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
   loop->stop();
@@ -860,7 +885,8 @@ TEST_CASE("GroupEventLoop copy/move optimization - two groups with 3 receivers e
   auto counter = std::make_shared<TrackingCounter>();
 
   // Prime and start - event should go to both groups
-  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).start_unique();
+  auto loop = Loop::setup().prime(TrackedEvent{ counter, kTestValue4 }).create_unique();
+  loop->start();
 
   std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
   loop->stop();
@@ -991,39 +1017,41 @@ TEST_CASE("ExternalGroup - emitter handle stays valid after EventLoop destructio
   REQUIRE(emitter.emit(EventA{ .value = kTestValue2 }));
 }
 
-TEST_CASE("ExternalEmitter - default constructed emitter returns false on emit", "[group_event_loop][external]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("ExternalEmitter", "[group_event_loop][external]")
 {
-  const ev_loop::ExternalEmitter<EventA, EventB> emitter;
+  SECTION("default constructed emitter returns false on emit")
+  {
+    const ev_loop::ExternalEmitter<EventA, EventB> emitter;
 
-  // Default constructed emitter is invalid
-  REQUIRE_FALSE(static_cast<bool>(emitter));
+    REQUIRE_FALSE(static_cast<bool>(emitter));
+    REQUIRE_FALSE(emitter.emit(EventA{ .value = kTestValue1 }));
+    REQUIRE_FALSE(emitter.emit(EventB{ .value = kTestValue2 }));
+  }
 
-  // emit returns false for invalid emitter
-  REQUIRE_FALSE(emitter.emit(EventA{ .value = kTestValue1 }));
-  REQUIRE_FALSE(emitter.emit(EventB{ .value = kTestValue2 }));
+  SECTION("emit returns false when queue is full")
+  {
+    using Loop =
+      ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalEventCounter>, ev_loop::ExternalGroup<PrimaryExternalInputs>>;
+
+    auto loop = Loop::setup().create_unique();
+    auto emitter = loop->get_external_emitter<PrimaryExternalInputs>();
+
+    // Fill the queue (default capacity is 4096)
+    constexpr int kQueueCapacity = 4096;
+    for (int i = 0; i < kQueueCapacity; ++i) { REQUIRE(emitter.emit(EventA{ .value = i })); }
+
+    // Queue is now full, emit should return false
+    REQUIRE_FALSE(emitter.emit(EventA{ .value = kQueueCapacity }));
+
+    // After draining some events, emit should work again
+    loop->poll_all_external();
+    while (loop->poll_group<0>()) {}
+
+    REQUIRE(emitter.emit(EventA{ .value = kQueueCapacity + 1 }));
+  }
 }
-
-TEST_CASE("ExternalEmitter - emit returns false when queue is full", "[group_event_loop][external]")
-{
-  using Loop =
-    ev_loop::GroupEventLoop<ev_loop::SpinGroup<ExternalEventCounter>, ev_loop::ExternalGroup<PrimaryExternalInputs>>;
-
-  auto loop = Loop::setup().create_unique();
-  auto emitter = loop->get_external_emitter<PrimaryExternalInputs>();
-
-  // Fill the queue (default capacity is 4096)
-  constexpr int kQueueCapacity = 4096;
-  for (int i = 0; i < kQueueCapacity; ++i) { REQUIRE(emitter.emit(EventA{ .value = i })); }
-
-  // Queue is now full, emit should return false
-  REQUIRE_FALSE(emitter.emit(EventA{ .value = kQueueCapacity }));
-
-  // After draining some events, emit should work again
-  loop->poll_all_external();
-  while (loop->poll_group<0>()) {}
-
-  REQUIRE(emitter.emit(EventA{ .value = kQueueCapacity + 1 }));
-}
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // External input definitions for multi-ExternalGroup tests
 struct FirstExternalInputs
@@ -1263,151 +1291,155 @@ TEST_CASE("GroupEventLoop join() waits for all threads", "[group_event_loop]")
 }
 
 // =============================================================================
-// Setup tests - lvalue reuse and chaining
+// Setup builder tests
 // =============================================================================
 
-TEST_CASE("Setup can create multiple independent loops", "[group_event_loop]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("Setup builder", "[group_event_loop]")
 {
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
 
-  // Create two independent loops with same primed event
-  auto loop1 = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
-  auto loop2 = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+  SECTION("can create multiple independent loops")
+  {
+    auto loop1 = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+    auto loop2 = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
 
-  // Poll events on both loops
-  while (loop1->poll_group<0>()) {}
-  while (loop2->poll_group<0>()) {}
+    while (loop1->poll_group<0>()) {}
+    while (loop2->poll_group<0>()) {}
 
-  // Each loop should have processed its own event
-  REQUIRE(loop1->get<ReceiverA>().count.load() == kTestValue1);
-  REQUIRE(loop2->get<ReceiverA>().count.load() == kTestValue1);
+    REQUIRE(loop1->get<ReceiverA>().count.load() == kTestValue1);
+    REQUIRE(loop2->get<ReceiverA>().count.load() == kTestValue1);
+  }
+
+  SECTION("prime chaining accumulates events")
+  {
+    auto loop =
+      Loop::setup().prime(EventA{ .value = 1 }).prime(EventA{ .value = 2 }).prime(EventA{ .value = 3 }).create_unique();
+
+    while (loop->poll_group<0>()) {}
+
+    REQUIRE(loop->get<ReceiverA>().count.load() == 6); // 1 + 2 + 3
+  }
 }
-
-TEST_CASE("Setup prime chaining works correctly", "[group_event_loop]")
-{
-  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
-
-  // Test chaining multiple primes
-  auto loop =
-    Loop::setup().prime(EventA{ .value = 1 }).prime(EventA{ .value = 2 }).prime(EventA{ .value = 3 }).create_unique();
-
-  while (loop->poll_group<0>()) {}
-
-  // ReceiverA adds values: 1 + 2 + 3 = 6
-  REQUIRE(loop->get<ReceiverA>().count.load() == 6);
-}
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // =============================================================================
-// Hybrid strategy with custom spin_count
+// Hybrid strategy tests
 // =============================================================================
 
-TEST_CASE("HybridGroup with custom spin_count", "[group_event_loop]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("Hybrid strategy", "[group_event_loop]")
 {
-  // Use ThreadGroup<Hybrid, ...> with custom spin_count
-  using Loop = ev_loop::GroupEventLoop<ev_loop::ThreadGroup<ev_loop::Hybrid, ReceiverA>>;
+  SECTION("HybridGroup processes events")
+  {
+    using Loop = ev_loop::GroupEventLoop<ev_loop::ThreadGroup<ev_loop::Hybrid, ReceiverA>>;
 
-  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).start_unique();
+    auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+    loop->start();
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
+    std::this_thread::sleep_for(std::chrono::milliseconds(kShortSleepMs));
+    loop->stop();
 
-  loop->stop();
+    REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
+  }
 
-  REQUIRE(loop->get<ReceiverA>().count.load() == kTestValue1);
+  SECTION("configurable spin_count")
+  {
+    constexpr ev_loop::Hybrid default_hybrid{};
+    STATIC_REQUIRE(default_hybrid.spin_count == 1000);
+
+    constexpr ev_loop::Hybrid custom_hybrid{ .spin_count = 500 };
+    STATIC_REQUIRE(custom_hybrid.spin_count == 500);
+  }
 }
-
-// Verify Hybrid strategy constant is correct
-TEST_CASE("Hybrid strategy has configurable spin_count", "[group_event_loop]")
-{
-  constexpr ev_loop::Hybrid default_hybrid{};
-  STATIC_REQUIRE(default_hybrid.spin_count == 1000);
-
-  constexpr ev_loop::Hybrid custom_hybrid{ .spin_count = 500 };
-  STATIC_REQUIRE(custom_hybrid.spin_count == 500);
-}
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // =============================================================================
 // ExternalInbox direct tests
 // =============================================================================
 
-TEST_CASE("ExternalInbox push and try_pop", "[external]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("ExternalInbox", "[external]")
 {
-  ev_loop::ExternalInbox<EventA, EventB> inbox;
+  SECTION("push and try_pop")
+  {
+    ev_loop::ExternalInbox<EventA, EventB> inbox;
 
-  REQUIRE(inbox.empty<EventA>());
-  REQUIRE(inbox.empty<EventB>());
+    REQUIRE(inbox.empty<EventA>());
+    REQUIRE(inbox.empty<EventB>());
 
-  // Push events
-  REQUIRE(inbox.push(EventA{ .value = kTestValue1 }));
-  REQUIRE(inbox.push(EventB{ .value = kTestValue2 }));
+    REQUIRE(inbox.push(EventA{ .value = kTestValue1 }));
+    REQUIRE(inbox.push(EventB{ .value = kTestValue2 }));
 
-  REQUIRE_FALSE(inbox.empty<EventA>());
-  REQUIRE_FALSE(inbox.empty<EventB>());
+    REQUIRE_FALSE(inbox.empty<EventA>());
+    REQUIRE_FALSE(inbox.empty<EventB>());
 
-  // Pop events
-  EventA event_a{};
-  EventB event_b{};
+    EventA event_a{};
+    EventB event_b{};
 
-  REQUIRE(inbox.try_pop(event_a));
-  REQUIRE(event_a.value == kTestValue1);
+    REQUIRE(inbox.try_pop(event_a));
+    REQUIRE(event_a.value == kTestValue1);
 
-  REQUIRE(inbox.try_pop(event_b));
-  REQUIRE(event_b.value == kTestValue2);
+    REQUIRE(inbox.try_pop(event_b));
+    REQUIRE(event_b.value == kTestValue2);
 
-  REQUIRE(inbox.empty<EventA>());
-  REQUIRE(inbox.empty<EventB>());
-}
-
-TEST_CASE("ExternalInbox concurrent producers", "[external]")
-{
-  ev_loop::ExternalInbox<EventA> inbox;
-
-  constexpr int kEventsPerThread = 500;
-  constexpr int kNumThreads = 4;
-
-  std::vector<std::thread> producers;
-  producers.reserve(kNumThreads);
-
-  for (int i = 0; i < kNumThreads; ++i) {
-    producers.emplace_back([&inbox]() {
-      for (int j = 0; j < kEventsPerThread; ++j) { inbox.push(EventA{ .value = 1 }); }
-    });
+    REQUIRE(inbox.empty<EventA>());
+    REQUIRE(inbox.empty<EventB>());
   }
 
-  for (auto& producer : producers) { producer.join(); }
+  SECTION("concurrent producers")
+  {
+    ev_loop::ExternalInbox<EventA> inbox;
 
-  // Count all events
-  int count = 0;
-  EventA event{};
-  while (inbox.try_pop(event)) { count += event.value; }
+    constexpr int kEventsPerThread = 500;
+    constexpr int kNumThreads = 4;
 
-  REQUIRE(count == kEventsPerThread * kNumThreads);
+    std::vector<std::thread> producers;
+    producers.reserve(kNumThreads);
+
+    for (int i = 0; i < kNumThreads; ++i) {
+      producers.emplace_back([&inbox]() {
+        for (int j = 0; j < kEventsPerThread; ++j) { inbox.push(EventA{ .value = 1 }); }
+      });
+    }
+
+    for (auto& producer : producers) { producer.join(); }
+
+    int count = 0;
+    EventA event{};
+    while (inbox.try_pop(event)) { count += event.value; }
+
+    REQUIRE(count == kEventsPerThread * kNumThreads);
+  }
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // =============================================================================
 // poll_group return value tests
 // =============================================================================
 
-TEST_CASE("poll_group returns true when work was done", "[group_event_loop]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("poll_group return value", "[group_event_loop]")
 {
   using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
 
-  auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
+  SECTION("returns true when work was done")
+  {
+    auto loop = Loop::setup().prime(EventA{ .value = kTestValue1 }).create_unique();
 
-  // First poll should find work
-  REQUIRE(loop->poll_group<0>());
+    REQUIRE(loop->poll_group<0>());
+    REQUIRE_FALSE(loop->poll_group<0>()); // No more work
+  }
 
-  // Second poll should find no work
-  REQUIRE_FALSE(loop->poll_group<0>());
+  SECTION("returns false when no work available")
+  {
+    auto loop = Loop::setup().create_unique(); // No primed events
+
+    REQUIRE_FALSE(loop->poll_group<0>());
+  }
 }
 
-TEST_CASE("poll_group returns false when no work available", "[group_event_loop]")
-{
-  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
-
-  auto loop = Loop::setup().create_unique(); // No primed events
-
-  REQUIRE_FALSE(loop->poll_group<0>());
-}
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // =============================================================================
 // GroupStorage receivers() accessor test
@@ -1430,24 +1462,28 @@ TEST_CASE("GroupStorage receivers() returns tuple", "[group_event_loop]")
 // const access tests (deducing this)
 // =============================================================================
 
-TEST_CASE("GroupEventLoop const access via get()", "[group_event_loop]")
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+TEST_CASE("const access via deducing this", "[group_event_loop]")
 {
-  using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
+  SECTION("GroupEventLoop const access via get()")
+  {
+    using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<ReceiverA>>;
 
-  auto loop = Loop::setup().create_unique();
-  loop->get<ReceiverA>().count.store(kTestValue1);
+    auto loop = Loop::setup().create_unique();
+    loop->get<ReceiverA>().count.store(kTestValue1);
 
-  // Access via const reference
-  const auto& const_loop = *loop;
-  REQUIRE(const_loop.get<ReceiverA>().count.load() == kTestValue1);
+    const auto& const_loop = *loop;
+    REQUIRE(const_loop.get<ReceiverA>().count.load() == kTestValue1);
+  }
+
+  SECTION("GroupStorage const access")
+  {
+    using Group = ev_loop::SpinGroup<ReceiverA>;
+    ev_loop::detail::GroupStorage<Group> storage;
+    storage.get<ReceiverA>().count.store(kTestValue1);
+
+    const auto& const_storage = storage;
+    REQUIRE(const_storage.get<ReceiverA>().count.load() == kTestValue1);
+  }
 }
-
-TEST_CASE("GroupStorage const access", "[group_event_loop]")
-{
-  using Group = ev_loop::SpinGroup<ReceiverA>;
-  ev_loop::detail::GroupStorage<Group> storage;
-  storage.get<ReceiverA>().count.store(kTestValue1);
-
-  const auto& const_storage = storage;
-  REQUIRE(const_storage.get<ReceiverA>().count.load() == kTestValue1);
-}
+// NOLINTEND(readability-function-cognitive-complexity)

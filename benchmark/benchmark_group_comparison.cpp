@@ -324,7 +324,8 @@ void bench_multi_thread()
   // 2 SpinGroups - each on own thread
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<GroupA>, ev_loop::SpinGroup<GroupB>>;
-    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -341,7 +342,8 @@ void bench_multi_thread()
   // 2 WaitGroups - each on own thread
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::WaitGroup<GroupA>, ev_loop::WaitGroup<GroupB>>;
-    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -379,7 +381,8 @@ void bench_ping_pong()
   // Two groups ping-pong (inter-group dispatch via queues) - SPSC
   {
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<PingPongGrpA>, ev_loop::SpinGroup<PingPongGrpB>>;
-    auto loop = Loop::setup().prime(Ping{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(Ping{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -400,7 +403,8 @@ void bench_ping_pong()
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<MpscProducer1>,
       ev_loop::SpinGroup<MpscProducer2>,
       ev_loop::SpinGroup<MpscCollector>>;
-    auto loop = Loop::setup().prime(MpscAck{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(MpscAck{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 
@@ -424,7 +428,8 @@ void bench_ping_pong()
       ev_loop::SpinGroup<MpscProducer3>,
       ev_loop::SpinGroup<MpscProducer4>,
       ev_loop::SpinGroup<MpscCollector>>;
-    auto loop = Loop::setup().prime(MpscAck{ 0 }).start_unique();
+    auto loop = Loop::setup().prime(MpscAck{ 0 }).create_unique();
+    loop->start();
 
     const auto started = steady_clock::now();
 

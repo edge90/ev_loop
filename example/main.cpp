@@ -127,7 +127,8 @@ int main()
     using Loop = ev_loop::GroupEventLoop<ev_loop::SpinGroup<Logger, Controller>, ev_loop::SpinGroup<Processor>>;
 
     // Prime events and start
-    auto loop = Loop::setup().prime(StartEvent{ 1 }).prime(StartEvent{ 2 }).start_unique();
+    auto loop = Loop::setup().prime(StartEvent{ 1 }).prime(StartEvent{ 2 }).create_unique();
+    loop->start();
 
     // Wait for processing to complete
     std::this_thread::sleep_for(std::chrono::milliseconds(kThreadedReceiverDelayMs));
