@@ -34,13 +34,13 @@ See [cppreference.com](https://en.cppreference.com/w/cpp/compiler_support)
 to see which features are supported by each compiler.
 The following compilers should work:
 
-  * [GCC 13+](https://gcc.gnu.org/)
+  * [GCC 14+](https://gcc.gnu.org/)
 	<details>
 	<summary>Install command</summary>
 
 	- Debian/Ubuntu:
 
-			sudo apt install g++-13
+			sudo apt install g++-14
 
 	- Windows:
 
@@ -48,10 +48,10 @@ The following compilers should work:
 
 	- MacOS:
 
-			brew install gcc@13
+			brew install gcc@14
 	</details>
 
-  * [Clang 17+](https://clang.llvm.org/)
+  * [Clang 18+](https://clang.llvm.org/)
 	<details>
 	<summary>Install command</summary>
 
@@ -68,7 +68,7 @@ The following compilers should work:
 		llvm-utils for using external LLVM with Visual Studio generator:
 
 			git clone https://github.com/zufuliu/llvm-utils.git
-			cd llvm-utils/VS2017
+			cd llvm-utils/VS2022
 			.\install.bat
 
 	- MacOS:

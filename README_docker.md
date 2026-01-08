@@ -15,7 +15,7 @@ If you want to build this container using specific versions of gcc and clang,
 you may do so with the `GCC_VER` and `LLVM_VER` arguments:
 
 ```bash
-docker build --tag=ev_loop:latest --build-arg GCC_VER=13 --build-arg LLVM_VER=17 .
+docker build --tag=ev_loop:latest --build-arg GCC_VER=14 --build-arg LLVM_VER=18 .
 ```
 
 To use clang as your default CC and CXX environment variables:
