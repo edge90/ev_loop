@@ -117,8 +117,8 @@ ev_loop_package_project(
   ev_loop
   ev_loop_options
   ev_loop_warnings
-  # FIXME: this does not work! CK
-  # PRIVATE_DEPENDENCIES_CONFIGURED project_options project_warnings
+  PUBLIC_INCLUDES
+  include
 )
 
 # Experience shows that explicit package naming can help make it easier to sort
