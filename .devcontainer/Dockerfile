@@ -1,5 +1,5 @@
-# [Choice] bionic (18.04), focal (20.04)
-ARG VARIANT="focal"
+# [Choice] jammy (22.04), noble (24.04)
+ARG VARIANT="noble"
 FROM ubuntu:${VARIANT}
 
 # Restate the variant to use it later on in the llvm and cmake installations
@@ -14,8 +14,7 @@ RUN apt-get update -qq && export DEBIAN_FRONTEND=noninteractive && \
         python3 python3-pip
 
 # Install conan
-RUN python3 -m pip install --upgrade pip setuptools && \
-    python3 -m pip install conan && \
+RUN python3 -m pip install conan --break-system-packages && \
     conan --version
 
 # By default, anything you run in Docker is done as superuser.
@@ -28,9 +27,8 @@ ENV CONAN_SYSREQUIRES_SUDO 0
 ENV CONAN_SYSREQUIRES_MODE enabled
 
 # User-settable versions:
-# This Dockerfile should support gcc-[7, 8, 9, 10, 11] and clang-[10, 11, 12, 13]
-# Earlier versions of clang will require significant modifications to the IWYU section
-ARG GCC_VER="11"
+# This Dockerfile requires gcc-14+ or clang-18+ for C++23 "deducing this" support
+ARG GCC_VER="14"
 # Add gcc-${GCC_VER}
 RUN add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
     apt-get update -qq && export DEBIAN_FRONTEND=noninteractive && \
@@ -41,7 +39,7 @@ RUN add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
 RUN update-alternatives --install /usr/bin/gcc gcc $(which gcc-${GCC_VER}) 100
 RUN update-alternatives --install /usr/bin/g++ g++ $(which g++-${GCC_VER}) 100
 
-ARG LLVM_VER="13"
+ARG LLVM_VER="18"
 # Add clang-${LLVM_VER}
 ARG LLVM_URL="http://apt.llvm.org/${VARIANT}/"
 ARG LLVM_PKG="llvm-toolchain-${VARIANT}-${LLVM_VER}"
@@ -50,10 +48,12 @@ RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - 2>/dev/
     apt-get update -qq && export DEBIAN_FRONTEND=noninteractive && \
     apt-get install -y --no-install-recommends \
         clang-${LLVM_VER} lldb-${LLVM_VER} lld-${LLVM_VER} clangd-${LLVM_VER} \
-        llvm-${LLVM_VER}-dev libclang-${LLVM_VER}-dev clang-tidy-${LLVM_VER}
+        llvm-${LLVM_VER}-dev libclang-${LLVM_VER}-dev clang-tidy-${LLVM_VER} \
+        clang-format-${LLVM_VER}
 
-# Set the default clang-tidy, so CMake can find it
+# Set the default clang-tidy and clang-format, so CMake can find them
 RUN update-alternatives --install /usr/bin/clang-tidy clang-tidy $(which clang-tidy-${LLVM_VER}) 1
+RUN update-alternatives --install /usr/bin/clang-format clang-format $(which clang-format-${LLVM_VER}) 1
 
 # Set clang-${LLVM_VER} as default clang
 RUN update-alternatives --install /usr/bin/clang clang $(which clang-${LLVM_VER}) 100
@@ -73,10 +73,21 @@ RUN apt-get update -qq && export DEBIAN_FRONTEND=noninteractive && \
     apt-get install -y --no-install-recommends \
         neovim emacs nano
 
-# Install optional dependecies
+# Install optional dependencies
 RUN apt-get update -qq && export DEBIAN_FRONTEND=noninteractive && \
     apt-get install -y --no-install-recommends \
-        doxygen graphviz ccache cppcheck
+        doxygen graphviz ccache
+
+# Build cppcheck from source (need 2.15+ for C++23 support)
+ARG CPPCHECK_VER="2.19.1"
+RUN git clone --branch ${CPPCHECK_VER} --depth 1 \
+        https://github.com/danmar/cppcheck.git /tmp/cppcheck && \
+    cmake -S /tmp/cppcheck -B /tmp/cppcheck/build \
+        -G Ninja -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build /tmp/cppcheck/build -j && \
+    cmake --install /tmp/cppcheck/build && \
+    rm -rf /tmp/cppcheck && \
+    cppcheck --version
 
 # Install include-what-you-use
 ENV IWYU /home/iwyu
@@ -114,7 +125,7 @@ ENV CC=${CC:-"gcc"}
 ENV CXX=${CXX:-"g++"}
 
 # Include project
-#ADD . /workspaces/cpp_starter_project
-#WORKDIR /workspaces/cpp_starter_project
+#ADD . /workspaces/ev_loop
+#WORKDIR /workspaces/ev_loop
 
 CMD ["/bin/bash"]
