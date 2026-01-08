@@ -46,6 +46,7 @@ template<typename Derived> struct WaitableReceiver
 
 struct TrackingCounter
 {
+  // GCOVR_EXCL_START - Inline member initializers not tracked by coverage tools
   // cppcheck-suppress unusedStructMember
   std::atomic<int> constructed_count{ 0 };
   // cppcheck-suppress unusedStructMember
@@ -54,6 +55,7 @@ struct TrackingCounter
   std::atomic<int> move_count{ 0 };
   // cppcheck-suppress unusedStructMember
   std::atomic<int> copy_count{ 0 };
+  // GCOVR_EXCL_STOP
 
   [[nodiscard]] bool balanced() const { return constructed_count.load() == destructed_count.load(); }
 };
