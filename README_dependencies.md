@@ -29,18 +29,18 @@ RefreshEnv.cmd # reload the environment
 ```
 
 ### Necessary Dependencies
-1. A C++ compiler that supports C++17.
+1. A C++ compiler that supports C++23 (specifically "deducing this").
 See [cppreference.com](https://en.cppreference.com/w/cpp/compiler_support)
 to see which features are supported by each compiler.
 The following compilers should work:
 
-  * [gcc 7+](https://gcc.gnu.org/)
+  * [GCC 13+](https://gcc.gnu.org/)
 	<details>
 	<summary>Install command</summary>
 
 	- Debian/Ubuntu:
 
-			sudo apt install build-essential
+			sudo apt install g++-13
 
 	- Windows:
 
@@ -48,10 +48,10 @@ The following compilers should work:
 
 	- MacOS:
 
-			brew install gcc
+			brew install gcc@13
 	</details>
 
-  * [clang 6+](https://clang.llvm.org/)
+  * [Clang 17+](https://clang.llvm.org/)
 	<details>
 	<summary>Install command</summary>
 
@@ -61,7 +61,7 @@ The following compilers should work:
 
 	- Windows:
 
-		Visual Studio 2019 ships with LLVM (see the Visual Studio section). However, to install LLVM separately:
+		Visual Studio 2022 ships with LLVM (see the Visual Studio section). However, to install LLVM separately:
 
 			choco install llvm -y
 
@@ -76,15 +76,15 @@ The following compilers should work:
 			brew install llvm
 	</details>
 
-  * [Visual Studio 2019 or higher](https://visualstudio.microsoft.com/)
+  * [Visual Studio 2022 (MSVC 19.36+)](https://visualstudio.microsoft.com/)
 	<details>
 	<summary>Install command + Environment setup</summary>
 
-	On Windows, you need to install Visual Studio 2019 because of the SDK and libraries that ship with it.
+	On Windows, you need to install Visual Studio 2022 because of the SDK and libraries that ship with it.
 
-  	Visual Studio IDE - 2019 Community (installs Clang too):
+  	Visual Studio IDE - 2022 Community (installs Clang too):
 
-  	  	choco install -y visualstudio2019community --package-parameters "add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --includeOptional --passive --locale en-US"
+  	  	choco install -y visualstudio2022community --package-parameters "add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --includeOptional --passive --locale en-US"
 
 	Put MSVC compiler, Clang compiler, and vcvarsall.bat on the path:
 
@@ -118,6 +118,24 @@ The following compilers should work:
 	- MacOS:
 
 			brew install cmake
+
+	</details>
+
+3. [Ninja](https://ninja-build.org/) (recommended build system)
+	<details>
+	<summary>Install Command</summary>
+
+	- Debian/Ubuntu:
+
+			sudo apt-get install ninja-build
+
+	- Windows:
+
+			choco install ninja -y
+
+	- MacOS:
+
+			brew install ninja
 
 	</details>
 
