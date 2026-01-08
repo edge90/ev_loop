@@ -1,11 +1,56 @@
 ## Build Instructions
 
+This project requires C++23 features (specifically "deducing this"). See [Dependencies](README_dependencies.md) for supported compilers.
+
 A full build has different steps:
 1) Specifying the compiler using environment variables
 2) Configuring the project
 3) Building the project
 
-For the subsequent builds, in case you change the source code, you only need to repeat the last step.
+For subsequent builds, if you only change source code, you only need to repeat the last step.
+
+### Quick Start
+
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+### CMake Options
+
+| Option | Description |
+|--------|-------------|
+| `ev_loop_PACKAGING_MAINTAINER_MODE=ON` | Disables sanitizers, clang-tidy, cppcheck by default |
+| `ev_loop_ENABLE_IPO=ON` | Enable LTO (Link Time Optimization) |
+| `ev_loop_ENABLE_HARDENING=OFF` | Disable hardening for max performance |
+| `ev_loop_ENABLE_COVERAGE=ON` | Enable code coverage instrumentation |
+
+#### Release Build (Maximum Performance)
+
+```bash
+cmake -B build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -Dev_loop_PACKAGING_MAINTAINER_MODE=ON \
+  -Dev_loop_ENABLE_IPO=ON \
+  -Dev_loop_ENABLE_HARDENING=OFF
+
+cmake --build build
+```
+
+#### Coverage Build
+
+```bash
+cmake -B build_cov -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -Dev_loop_PACKAGING_MAINTAINER_MODE=ON \
+  -Dev_loop_ENABLE_COVERAGE=ON
+
+cmake --build build_cov
+ctest --test-dir build_cov
+gcovr --config gcovr.cfg build_cov
+```
+
+Coverage reports are generated in `out/coverage/` (HTML) and `out/cobertura.xml` (XML).
 
 ### (1) Specify the compiler using environment variables
 
@@ -178,15 +223,40 @@ For Visual Studio, give the build configuration (Release, RelWithDeb, Debug, etc
 
     cmake --build ./build -- /p:configuration=Release
 
+### Build Targets
+
+| Target | Description |
+|--------|-------------|
+| `tests` | Unit tests |
+| `ev_benchmark` | Single-threaded benchmark |
+| `ev_benchmark_threaded` | Multi-threaded benchmark |
+| `ev_example` | Example application |
+| `constexpr_tests` | Constexpr tests |
+
+Build a specific target:
+
+```bash
+cmake --build build --target tests
+```
 
 ### Running the tests
 
-You can use the `ctest` command run the tests.
+You can use the `ctest` command to run the tests.
 
-```shell
-cd ./build
-ctest -C Debug
-cd ../
+```bash
+ctest --test-dir ./build
+```
+
+Or run directly:
+
+```bash
+./build/tests
+```
+
+### Running clang-tidy
+
+```bash
+clang-tidy -p build <files>
 ```
 
 
