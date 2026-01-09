@@ -16,7 +16,7 @@ env:
 
 jobs:
   Test:
-    name: ${{matrix.os}} ${{matrix.compiler}} ${{matrix.build_type}} ${{matrix.packaging_maintainer_mode == 'ON' && '(maintainer mode)' || ''}}
+    name: ${{matrix.os}} ${{matrix.compiler}} ${{matrix.build_type}} ${{matrix.packaging_maintainer_mode == 'ON' && '(maintainer mode)' || ''}} ${{matrix.enable_tsan && '(TSan)' || ''}}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -44,7 +44,6 @@ jobs:
           - Debug
         packaging_maintainer_mode:
           - ON
-          - OFF
         build_shared:
           - OFF
 
@@ -58,18 +57,24 @@ jobs:
           # if you try to use a compiler that does not have gcov set
           - compiler: gcc-14
             gcov_executable: gcov-14
-            enable_ipo: On
+            enable_ipo: ON
 
           - compiler: llvm-19.1.1
-            enable_ipo: Off
+            enable_ipo: OFF
             gcov_executable: "llvm-cov gcov"
 
           - os: macos-latest
-            enable_ipo: Off
+            enable_ipo: OFF
+
+          # Debug builds get coverage and ASan/UBSan (TSan entry overrides this)
+          - build_type: Debug
+            enable_coverage: true
+            enable_asan: true
+            enable_ubsan: true
 
           # Set up preferred package generators, for given build configurations
           - build_type: Release
-            packaging_maintainer_mode: On
+            packaging_maintainer_mode: ON
             package_generator: TBZ2
 
           # This exists solely to make sure a non-multiconfig build works
@@ -78,44 +83,66 @@ jobs:
             generator: "Unix Makefiles"
             build_type: Debug
             gcov_executable: gcov-14
-            packaging_maintainer_mode: On
-            enable_ipo: Off
+            packaging_maintainer_mode: ON
+            enable_ipo: OFF
 
           # Windows msvc builds
           - os: windows-latest
             compiler: msvc
             generator: "Visual Studio 17 2022"
             build_type: Debug
-            packaging_maintainer_mode: On
-            enable_ipo: On
+            packaging_maintainer_mode: ON
+            enable_ipo: ON
 
           - os: windows-latest
             compiler: msvc
             generator: "Visual Studio 17 2022"
             build_type: Release
-            packaging_maintainer_mode: On
-            enable_ipo: On
+            packaging_maintainer_mode: ON
+            enable_ipo: ON
 
           - os: windows-latest
             compiler: msvc
             generator: "Visual Studio 17 2022"
             build_type: Debug
-            packaging_maintainer_mode: Off
+            packaging_maintainer_mode: OFF
 
           - os: windows-latest
             compiler: msvc
             generator: "Visual Studio 17 2022"
             build_type: Release
-            packaging_maintainer_mode: Off
+            packaging_maintainer_mode: OFF
             package_generator: ZIP
 
           - os: windows-latest
             compiler: msvc
             generator: "Visual Studio 17 2022"
             build_type: Release
-            packaging_maintainer_mode: On
-            enable_ipo: On
-            build_shared: On
+            packaging_maintainer_mode: ON
+            enable_ipo: ON
+            build_shared: ON
+
+          # ThreadSanitizer build (Clang only, mutually exclusive with ASan/UBSan)
+          - os: ubuntu-latest
+            compiler: llvm-19.1.1
+            generator: "Ninja Multi-Config"
+            build_type: Debug
+            packaging_maintainer_mode: ON
+            enable_ipo: OFF
+            gcov_executable: "llvm-cov gcov"
+            enable_tsan: true
+            enable_coverage: false
+            enable_asan: false
+            enable_ubsan: false
+
+          # Test CMake defaults (packaging_maintainer_mode OFF enables ASan, UBSan, clang-tidy, cppcheck)
+          - os: ubuntu-latest
+            compiler: llvm-19.1.1
+            generator: "Ninja Multi-Config"
+            build_type: Debug
+            packaging_maintainer_mode: OFF
+            gcov_executable: "llvm-cov gcov"
+            enable_coverage: false
 
 
     steps:
@@ -125,6 +152,13 @@ jobs:
         with:
           script: |
             core.setFailed('There is a mismatch between configured llvm compiler and clang-tidy version chosen')
+
+      - name: Check for incompatible sanitizer configuration
+        if: ${{ matrix.enable_tsan && (matrix.enable_asan || matrix.enable_ubsan || matrix.packaging_maintainer_mode == 'OFF') }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            core.setFailed('TSan cannot be used with ASan or UBSan - they are mutually exclusive. Note: packaging_maintainer_mode=OFF enables ASan/UBSan by default.')
 
       - uses: actions/checkout@v6
 
@@ -161,8 +195,16 @@ jobs:
           opencppcoverage: true
 
       - name: Configure CMake
-        run: |
-          cmake -S . -B ./build -G "${{matrix.generator}}" -D${{ env.PROJECT_NAME }}_ENABLE_IPO=${{matrix.enable_ipo }} -DCMAKE_BUILD_TYPE:STRING=${{matrix.build_type}} -D${{ env.PROJECT_NAME }}_PACKAGING_MAINTAINER_MODE:BOOL=${{matrix.packaging_maintainer_mode}} -D${{ env.PROJECT_NAME }}_ENABLE_COVERAGE:BOOL=${{ matrix.build_type == 'Debug' }} -DGIT_SHA:STRING=${{ github.sha }}
+        run: >
+          cmake -S . -B ./build -G "${{matrix.generator}}"
+          -D${{ env.PROJECT_NAME }}_ENABLE_IPO=${{matrix.enable_ipo }}
+          -DCMAKE_BUILD_TYPE:STRING=${{matrix.build_type}}
+          -D${{ env.PROJECT_NAME }}_PACKAGING_MAINTAINER_MODE:BOOL=${{matrix.packaging_maintainer_mode}}
+          ${{ matrix.enable_coverage && format('-D{0}_ENABLE_COVERAGE:BOOL=ON', env.PROJECT_NAME) || '' }}
+          ${{ matrix.enable_asan && matrix.packaging_maintainer_mode != 'OFF' && format('-D{0}_ENABLE_SANITIZER_ADDRESS:BOOL=ON', env.PROJECT_NAME) || '' }}
+          ${{ matrix.enable_ubsan && matrix.packaging_maintainer_mode != 'OFF' && format('-D{0}_ENABLE_SANITIZER_UNDEFINED:BOOL=ON', env.PROJECT_NAME) || '' }}
+          ${{ matrix.enable_tsan && matrix.packaging_maintainer_mode != 'OFF' && format('-D{0}_ENABLE_SANITIZER_THREAD:BOOL=ON', env.PROJECT_NAME) || '' }}
+          -DGIT_SHA:STRING=${{ github.sha }}
 
       - name: Build
         # Execute the build.  You can specify a specific target with "--target <NAME>"
@@ -170,7 +212,7 @@ jobs:
           cmake --build ./build --config ${{matrix.build_type}}
 
       - name: Unix - Test and coverage
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.enable_coverage
         working-directory: ./build
         # Execute tests defined by the CMake configuration.
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
@@ -178,11 +220,23 @@ jobs:
           ctest -C ${{matrix.build_type}}
           gcovr -j ${{env.nproc}} --root ../ --print-summary --xml-pretty --xml coverage.xml . --gcov-executable '${{ matrix.gcov_executable }}'
 
+      - name: Unix - Test (no coverage)
+        if: runner.os != 'Windows' && !matrix.enable_coverage
+        working-directory: ./build
+        run: |
+          ctest -C ${{matrix.build_type}}
+
       - name: Windows - Test and coverage
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.enable_coverage
         working-directory: ./build
         run: |
           OpenCppCoverage.exe --export_type cobertura:coverage.xml --cover_children -- ctest -C ${{matrix.build_type}}
+
+      - name: Windows - Test (no coverage)
+        if: runner.os == 'Windows' && !matrix.enable_coverage
+        working-directory: ./build
+        run: |
+          ctest -C ${{matrix.build_type}}
 
       - name: CPack
         if: matrix.package_generator != ''
@@ -199,6 +253,7 @@ jobs:
 
 
       - name: Publish to codecov
+        if: matrix.enable_coverage
         uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: true # we weren't posting previously
