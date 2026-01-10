@@ -72,6 +72,18 @@ jobs:
             enable_asan: true
             enable_ubsan: true
 
+          # macOS gcc doesn't support ASan/UBSan (linker issues)
+          - os: macos-latest
+            compiler: gcc-14
+            enable_asan: false
+            enable_ubsan: false
+
+          # Windows llvm has iterator debug level mismatch with ASan
+          - os: windows-latest
+            compiler: llvm-19.1.1
+            enable_asan: false
+            enable_ubsan: false
+
           # Set up preferred package generators, for given build configurations
           - build_type: Release
             packaging_maintainer_mode: ON
