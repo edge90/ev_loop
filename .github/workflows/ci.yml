@@ -24,7 +24,9 @@ jobs:
       # Recommendations:
       #   * support at least 2 operating systems
       #   * support at least 2 compilers
-      #   * make sure all supported configurations for your project are built
+      #   * make sure all supported configurations fc06ed2b4-4f72-452c-95ca-d240724471be
+
+or your project are built
       #
       # Disable/enable builds in this list to meet the above recommendations
       # and your own projects needs
@@ -199,6 +201,7 @@ jobs:
 
 
       - name: Publish to codecov
+        if: github.actor != 'dependabot[bot]'
         uses: codecov/codecov-action@v7
         with:
           fail_ci_if_error: true # we weren't posting previously
