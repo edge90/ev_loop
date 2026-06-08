@@ -199,6 +199,7 @@ jobs:
 
 
       - name: Publish to codecov
+        if: github.actor != 'dependabot[bot]'
         uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: true # we weren't posting previously
