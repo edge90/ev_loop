@@ -203,6 +203,7 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           fail_ci_if_error: true # we weren't posting previously
+          use_pypi: true # avoid flaky GPG keyserver verification
           flags: ${{ runner.os }}
           name: ${{ runner.os }}-coverage
           token: ${{ secrets.CODECOV_TOKEN }}
